@@ -8,7 +8,7 @@ if test -f /etc/os-release; then
 elif test -f /usr/lib/os-release; then
    . /usr/lib/os-release
 fi
-apt-get update && apt-get install -y lsb-release curl gnupg bc
+apt-get install -y lsb-release curl gnupg bc
 # Detecting Ubuntu or Debian version using /etc/os-release
 UBUNTU=$(lsb_release -is | grep -i "ubuntu" || true)
 DEBIAN=$(lsb_release -is | grep -i "debian" || true)
