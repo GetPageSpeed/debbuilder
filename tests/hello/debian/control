@@ -1,0 +1,16 @@
+Source: minimal-package
+Section: misc
+Priority: optional
+Maintainer: Your Name <your.email@example.com>
+Build-Depends: debhelper (>= 10)
+Standards-Version: 4.5.0
+Homepage: https://example.com
+# Uncomment the Vcs fields if you have a version control system for your package
+# Vcs-Git: https://example.com/git/minimal-package
+# Vcs-Browser: https://example.com/browser/minimal-package
+
+Package: minimal-package
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: A minimal example package
+ A simple package to demonstrate debian packaging in a Docker container.

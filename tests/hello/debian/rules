@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# This is a simple debian/rules file using debhelper.
+
+%:
+	dh $@
