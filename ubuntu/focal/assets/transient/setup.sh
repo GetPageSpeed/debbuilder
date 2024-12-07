@@ -8,33 +8,33 @@ if test -f /etc/os-release; then
 elif test -f /usr/lib/os-release; then
    . /usr/lib/os-release
 fi
-apt-get install -y lsb-release curl gnupg bc
-# Detecting Ubuntu or Debian version using /etc/os-release
-UBUNTU=$(lsb_release -is | grep -i "ubuntu" || true)
-DEBIAN=$(lsb_release -is | grep -i "debian" || true)
-VERSION_CODENAME=$(lsb_release -cs)
+
+# Detecting Ubuntu or Debian version using variable that were set by /etc/os-release without lsb_release
+ID=${ID:-}
+VERSION_CODENAME=${VERSION_CODENAME:-${VERSION_ID}}
 echo "DISTRO: ${ID}, VERSION_CODENAME: ${VERSION_CODENAME}"
 
 # Package manager for Debian/Ubuntu systems
 PKGR="apt-get"
 PACKAGES="build-essential debhelper dpkg-dev devscripts lintian fakeroot quilt"
-PRE_PACKAGES="apt-transport-https ca-certificates"
+PRE_PACKAGES="apt-transport-https ca-certificates curl gnupg bc"
 
 # If any additional repositories need to be added (like GetPageSpeed or other custom repositories)
 PRIMARY_REPO_PACKAGES="https://extras.getpagespeed.com/release-latest.deb"
 
 # Enable necessary repositories for Ubuntu/Debian
 # Ensure that multiverse or universe repos are enabled for specific package dependencies
-if [[ "${UBUNTU}" ]]; then
+# If Ubuntu
+if [[ "${ID}" == "ubuntu" ]]; then
     ${PKGR} -y install software-properties-common
     add-apt-repository universe
     add-apt-repository multiverse
 fi
 
 # Install primary packages (e.g., for GetPageSpeed repo)
-curl -L "${PRIMARY_REPO_PACKAGES}" -o /tmp/getpagespeed-release-latest.deb
-dpkg -i /tmp/getpagespeed-release-latest.deb || true
-rm -f /tmp/getpagespeed-release-latest.deb
+#curl -L "${PRIMARY_REPO_PACKAGES}" -o /tmp/getpagespeed-release-latest.deb
+#dpkg -i /tmp/getpagespeed-release-latest.deb || true
+#rm -f /tmp/getpagespeed-release-latest.deb
 
 # Update the package index and install necessary build tools
 ${PKGR} update -y
