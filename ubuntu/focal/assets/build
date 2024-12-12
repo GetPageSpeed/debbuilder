@@ -41,7 +41,7 @@ fi
 
 # Look for all subdirectories containing a `debian` directory
 find_packages() {
-    find "${SOURCES}" -mindepth 1 -type d -name debian -print
+    find "${SOURCES}" -mindepth 1 -type d -name debian -exec dirname {} \;
 }
 
 # Function to check if the package can be skipped
@@ -61,6 +61,9 @@ check_packages_in_repo() {
             echo "Package ${package_name} version ${package_version} is missing. Building it."
             return 1
         fi
+    else
+        echo "No debian/control file found in ${source_dir}. Skipping build."
+        return 0
     fi
 }
 
