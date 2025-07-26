@@ -10,7 +10,9 @@ ADD ./assets/build /usr/bin/build
 #ADD ./assets/deblint.config /etc/deblint/config
 ADD ./assets/transient/* /tmp/
 
-RUN sed -i 's@ports.ubuntu.com@mirror.yandex.ru@g' /etc/apt/sources.list && apt-get update
+RUN sed -i 's@ports.ubuntu.com@mirror.yandex.ru@g' /etc/apt/sources.list && sed -i 's@ports.ubuntu.com@mirror.yandex.ru@g' /etc/apt/sources.list.d/* && apt-get update
+# RUN sed -i 's@ports.ubuntu.com@id.ports.ubuntu.com@g' /etc/apt/sources.list && sed -i 's@ports.ubuntu.com@id.ports.ubuntu.com@g' /etc/apt/sources.list.d/* && apt-get update
+
 
 RUN DISTRO=ubuntu RELEASE=focal /tmp/setup.sh
 
