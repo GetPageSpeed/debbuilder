@@ -132,8 +132,10 @@ The project includes GitHub Actions workflows for automated multi-architecture D
 - **Multi-architecture builds**: Automatically builds for both `linux/amd64` and `linux/arm64`
 - **Matrix builds**: Builds all supported Ubuntu and Debian versions in parallel
 - **Retry logic**: Robust retry mechanism for network-related build failures
-- **Automated testing**: Tests both architectures after successful builds
+- **Automated testing**: Tests x86_64 builds after successful multi-architecture builds
 - **Scheduled builds**: Runs every 6 hours to ensure images stay up-to-date
+
+**Note**: The workflow builds multi-architecture images (x86_64 and ARM64) but tests only the x86_64 version to avoid emulation issues. The ARM64 images are built and pushed to Docker Hub but not tested in CI due to emulation limitations on GitHub Actions runners.
 
 ### Configuration Files
 
