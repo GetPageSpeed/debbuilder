@@ -1,0 +1,113 @@
+{
+    "distro_defaults": {
+        "os_versions": 2,
+        "packager": "apt"
+    },
+    "distros": {
+        "ubuntu": {
+            "dist": "ubuntu",
+            "dir": "ubuntu",
+            "description": "Ubuntu Linux",
+            "has_plesk": true,
+            "docker": "ubuntu",
+            "packager": "apt",
+            "versions_check": false,
+            "versions": [
+                "focal",
+                "jammy",
+                "noble"
+            ],
+            "version_overrides": {
+                "focal": {
+                    "has_plesk": true
+                },
+                "jammy": {
+                    "has_plesk": true
+                },
+                "noble": {
+                    "has_plesk": true
+                }
+            }
+        },
+        "debian": {
+            "dist": "debian",
+            "dir": "debian",
+            "description": "Debian Linux",
+            "has_plesk": false,
+            "docker": "debian",
+            "packager": "apt",
+            "versions_check": false,
+            "versions": [
+                "bookworm",
+                "trixie"
+            ],
+            "version_overrides": {
+                "bookworm": {
+                    "has_plesk": false
+                },
+                "trixie": {
+                    "has_plesk": false
+                }
+            }
+        }
+    },
+    "collections": {
+        "nginx": {
+            "custom_steps_after_checkout": [
+                {
+                    "run": {
+                        "name": "Set up DEB macro reflecting the NGINX branch",
+                        "command": "echo \"nginx_branch=${CIRCLE_BRANCH}\" >> debmacros\n"
+                    }
+                },
+                {
+                    "run": {
+                        "name": "Set up plesk macro if passed by a job",
+                        "command": "[ -z ${PLESK+x} ] || echo \"plesk_version=${PLESK}\" >> debmacros\n"
+                    }
+                }
+            ],
+            "branches": {
+                "stable": {
+                    "description": "Stable NGINX",
+                    "git_branch": "master"
+                },
+                "mainline": {
+                    "description": "Mainline NGINX"
+                },
+                "angie": {
+                    "description": "Angie"
+                },
+                "nginx-mod": {
+                    "description": "NGINX-MOD"
+                },
+                "tengine": {
+                    "description": "Tengine"
+                },
+                "plesk": {
+                    "description": "Plesk",
+                    "plesk_version": 18,
+                    "only_dists": [
+                        "ubuntu*"
+                    ],
+                    "only_archs": [
+                        "amd64"
+                    ]
+                },
+                "freenginx-stable": {
+                    "description": "FreeNGINX Stable"
+                },
+                "freenginx-mainline": {
+                    "description": "FreeNGINX Mainline"
+                }
+            }
+        },
+        "varnish": {
+            "branches": {
+                "varnish60": {
+                    "description": "Varnish 6.0 LTS"
+                }
+            }
+        }
+    }
+} 

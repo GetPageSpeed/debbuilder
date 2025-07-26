@@ -13,77 +13,20 @@ This project provides Docker images for building Debian packages (.deb files) ac
 
 ## Available versions
 
-Currently supported Ubuntu and Debian versions:
+Currently supported Ubuntu versions:
 - `ubuntu/focal` - Ubuntu 20.04 LTS
-- `ubuntu/jammy` - Ubuntu 22.04 LTS  
 - `ubuntu/noble` - Ubuntu 24.04 LTS
-- `debian/bookworm` - Debian 12
-- `debian/trixie` - Debian 13 (testing)
-
-## Docker Image Tags
-
-The debbuilder images use multiple tag formats for flexibility:
-
-### Primary Tags (Full Names)
-- `getpagespeed/debuilder:ubuntu-noble`
-- `getpagespeed/debuilder:ubuntu-jammy`
-- `getpagespeed/debuilder:debian-bookworm`
-
-### Dist Tags (Version Numbers - Similar to RPM %{?dist})
-- `getpagespeed/debuilder:ubuntu24.04` (for noble/24.04)
-- `getpagespeed/debuilder:ubuntu22.04` (for jammy/22.04)
-- `getpagespeed/debuilder:ubuntu20.04` (for focal/20.04)
-- `getpagespeed/debuilder:debian12` (for bookworm/12)
-- `getpagespeed/debuilder:debian13` (for trixie/13)
-
-### Alternative Tags (Short Names)
-- `getpagespeed/debuilder:ubuntunoble`
-- `getpagespeed/debuilder:ubuntujammy`
-- `getpagespeed/debuilder:debianbookworm`
-
-**Usage Examples:**
-```bash
-# Using full name
-docker run -v /path/to/source:/sources -v /path/to/output:/output getpagespeed/debuilder:ubuntu-noble
-
-# Using dist tag (recommended for CI/CD - similar to RPM's el7, fc38)
-docker run -v /path/to/source:/sources -v /path/to/output:/output getpagespeed/debuilder:ubuntu24.04
-
-# Using short name
-docker run -v /path/to/source:/sources -v /path/to/output:/output getpagespeed/debuilder:ubuntunoble
-```
 
 ## Quick Start
 
-### 1. Generate Dockerfiles for all supported versions
+### 1. Build the Docker image
 
+For Ubuntu Noble (24.04):
 ```bash
-# Generate all versions
-./crypt-keeper.sh generate all
-
-# Or generate a specific version
-./crypt-keeper.sh generate ubuntu noble
-./crypt-keeper.sh generate debian bookworm
-```
-
-### 2. Build the Docker images
-
-```bash
-# Build a specific version locally
 docker build --tag debbuilder:ubuntu-noble ubuntu/noble
-docker build --tag debbuilder:ubuntu-jammy ubuntu/jammy
-docker build --tag debbuilder:debian-bookworm debian/bookworm
-
-# Or build all versions locally (without pushing to registry)
-for version in focal jammy noble; do
-    docker build --tag debbuilder:ubuntu-$version ubuntu/$version
-done
-
-# Note: The crypt-keeper build command pushes to Docker Hub registry
-# ./crypt-keeper.sh build all  # Requires Docker Hub authentication
 ```
 
-### 3. Build a package
+### 2. Build a package
 
 Mount a directory containing your package source and get .deb files as output:
 
@@ -103,7 +46,7 @@ The built .deb files will be available in `OUTPUT_DIR`.
 
 **Note**: The source directory should contain both your package directory (with the `debian` folder) and any original tarballs (`.orig.tar.gz` files) in the same directory structure.
 
-### 4. Example with test package
+### 3. Example with test package
 
 ```bash
 # Build the test hello package
@@ -179,6 +122,85 @@ The build script will automatically find packages by looking for directories con
 ### Permission issues
 - The container runs as root, so output files will be owned by root
 - Use the `OUTPUT_UID` environment variable to change ownership if needed
+
+## GitHub Actions CI/CD
+
+The project includes GitHub Actions workflows for automated multi-architecture Docker image building and testing.
+
+### Workflow Features
+
+- **Multi-architecture builds**: Automatically builds for both `linux/amd64` and `linux/arm64`
+- **Matrix builds**: Builds all supported Ubuntu and Debian versions in parallel
+- **Retry logic**: Robust retry mechanism for network-related build failures
+- **Automated testing**: Tests both architectures after successful builds
+- **Scheduled builds**: Runs every 6 hours to ensure images stay up-to-date
+
+### Configuration Files
+
+- **`.github/workflows/dockerbuild.yml`**: Main CI workflow
+- **`distro_versions.json`**: Matrix configuration for supported distributions
+- **`matrix.json`**: Detailed configuration for distributions and collections
+
+### Required Secrets
+
+Set these secrets in your GitHub repository settings:
+
+- `DOCKER_USER`: Docker Hub username
+- `DOCKER_PASS`: Docker Hub password/token
+
+### Matrix Configuration
+
+The `distro_versions.json` file defines which distributions to build:
+
+```json
+{
+    "include": [
+        {
+            "os": "ubuntu",
+            "version": "focal"
+        },
+        {
+            "os": "ubuntu", 
+            "version": "jammy"
+        },
+        {
+            "os": "ubuntu",
+            "version": "noble"
+        },
+        {
+            "os": "debian",
+            "version": "bookworm"
+        },
+        {
+            "os": "debian",
+            "version": "trixie"
+        }
+    ]
+}
+```
+
+### Adding New Versions
+
+1. **Add to `distro_versions.json`**:
+   ```json
+   {
+       "os": "ubuntu",
+       "version": "kinetic"
+   }
+   ```
+
+2. **Add to `defaults`**:
+   ```bash
+   echo "ubuntu kinetic" >> defaults
+   ```
+
+3. **Generate and test locally**:
+   ```bash
+   ./crypt-keeper.sh generate ubuntu kinetic
+   docker build --tag debbuilder:ubuntu-kinetic ubuntu/kinetic
+   ```
+
+4. **Commit and push**: The GitHub Actions will automatically build the new version.
 
 ## Development
 

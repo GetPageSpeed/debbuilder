@@ -114,7 +114,18 @@ function build() {
     
     # Ensure buildx is set up and ready for multi-architecture builds
     docker buildx create --use --name multiarch-builder --driver docker-container || true
-    cd "${DISTRO}/${VERSION}" && docker buildx build --platform linux/amd64,linux/arm64 --push -t "${MAIN_TAG}" -t "${ALT_TAG}" -t "${DIST_TAG}" .
+    
+    echo "Building multi-architecture image for ${DISTRO}-${VERSION}"
+    echo "Tags: ${MAIN_TAG}, ${ALT_TAG}, ${DIST_TAG}"
+    echo "Platforms: linux/amd64, linux/arm64"
+    
+    cd "${DISTRO}/${VERSION}" && docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        -t "${MAIN_TAG}" \
+        -t "${ALT_TAG}" \
+        -t "${DIST_TAG}" \
+        .
     cd -
 }
 
@@ -123,12 +134,24 @@ function push() {
 }
 
 function test() {
-    # Test build
+    # Test build for both architectures
     DISTRO=${1}
     VERSION=${2}
+    MAIN_TAG="$(docker-image-name "${DISTRO}" "${VERSION}")"
+    
     echo "Testing x86_64 build for ${DISTRO}-${VERSION}"
-    docker run --rm --platform linux/amd64 -v "$(pwd)"/tests/hello:/sources "$(docker-image-name "${DISTRO}" "${VERSION}")" build
-    echo "Done testing x86_64 build for ${DISTRO}-${VERSION}"
+    docker run --rm --platform linux/amd64 \
+        -v "$(pwd)"/tests:/sources \
+        -v "$(pwd)"/output:/output \
+        "${MAIN_TAG}" build
+    
+    echo "Testing aarch64 build for ${DISTRO}-${VERSION}"
+    docker run --rm --platform linux/arm64 \
+        -v "$(pwd)"/tests:/sources \
+        -v "$(pwd)"/output:/output \
+        "${MAIN_TAG}" build
+    
+    echo "Done testing both architectures for ${DISTRO}-${VERSION}"
 }
 
 case "$1" in

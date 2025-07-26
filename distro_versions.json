@@ -1,0 +1,24 @@
+{
+    "include": [
+        {
+            "os": "ubuntu",
+            "version": "focal"
+        },
+        {
+            "os": "ubuntu",
+            "version": "jammy"
+        },
+        {
+            "os": "ubuntu",
+            "version": "noble"
+        },
+        {
+            "os": "debian",
+            "version": "bookworm"
+        },
+        {
+            "os": "debian",
+            "version": "trixie"
+        }
+    ]
+} 
