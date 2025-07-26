@@ -1,2 +1,23 @@
+# Generated package files
 *.deb
 *.build
+*.buildinfo
+*.changes
+
+# Generated directories (created by crypt-keeper.sh)
+ubuntu/
+debian/
+
+# Output directories
+output/
+
+# Docker images (optional - you might want to keep these)
+# *.tar
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

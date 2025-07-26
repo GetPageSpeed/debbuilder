@@ -40,9 +40,11 @@ ADD ./assets/build /usr/bin/build
 #ADD ./assets/deblint.config /etc/deblint/config
 ADD ./assets/transient/* /tmp/
 
-RUN sed -i 's@ports.ubuntu.com@mirror.yandex.ru@g' /etc/apt/sources.list && sed -i 's@ports.ubuntu.com@mirror.yandex.ru@g' /etc/apt/sources.list.d/* && apt-get update
-# RUN sed -i 's@ports.ubuntu.com@id.ports.ubuntu.com@g' /etc/apt/sources.list && sed -i 's@ports.ubuntu.com@id.ports.ubuntu.com@g' /etc/apt/sources.list.d/* && apt-get update
-
+# Optimize apt settings for faster downloads
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \\
+    echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \\
+    echo 'Acquire::ftp::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \\
+    apt-get update
 
 RUN DISTRO=${DISTRO} RELEASE=${RELEASE} /tmp/setup.sh
 
@@ -73,14 +75,46 @@ function docker-image-alt-name() {
     echo -n "${DOCKER_REGISTRY_USER}/debuilder:${DIST}${VERSION}"
 }
 
+function docker-image-dist-tag() {
+    DISTRO=${1}
+    VERSION=${2}
+    
+    # Create dist tags using version numbers (similar to RPM's %{?dist} system)
+    # This matches patterns like ubuntu.24.04 seen in Plesk repositories
+    case "${DISTRO}" in
+        ubuntu)
+            case "${VERSION}" in
+                focal) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu20.04" ;;
+                jammy) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu22.04" ;;
+                noble) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu24.04" ;;
+                kinetic) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu22.10" ;;
+                *) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu${VERSION}" ;;
+            esac
+            ;;
+        debian)
+            case "${VERSION}" in
+                bookworm) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian12" ;;
+                trixie) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian13" ;;
+                sid) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian-sid" ;;
+                *) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian${VERSION}" ;;
+            esac
+            ;;
+        *)
+            echo -n "${DOCKER_REGISTRY_USER}/debuilder:${DISTRO}${VERSION}"
+            ;;
+    esac
+}
+
 function build() {
     DISTRO=${1}
     VERSION=${2}
     MAIN_TAG="$(docker-image-name "${DISTRO}" "${VERSION}")"
     ALT_TAG="$(docker-image-alt-name "${DISTRO}" "${VERSION}")"
+    DIST_TAG="$(docker-image-dist-tag "${DISTRO}" "${VERSION}")"
+    
     # Ensure buildx is set up and ready for multi-architecture builds
     docker buildx create --use --name multiarch-builder --driver docker-container || true
-    cd "${DISTRO}/${VERSION}" && docker buildx build --platform linux/amd64,linux/arm64 --push -t "${MAIN_TAG}" -t "${ALT_TAG}" .
+    cd "${DISTRO}/${VERSION}" && docker buildx build --platform linux/amd64,linux/arm64 --push -t "${MAIN_TAG}" -t "${ALT_TAG}" -t "${DIST_TAG}" .
     cd -
 }
 
@@ -98,7 +132,7 @@ function test() {
 }
 
 case "$1" in
-    generate|build|push|test)
+    generate|build|push|test|docker-image-name|docker-image-alt-name|docker-image-dist-tag)
         if [ "$2" == "all" ]; then
             map-all "$1"
         else
