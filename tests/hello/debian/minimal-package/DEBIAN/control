@@ -1,0 +1,11 @@
+Package: minimal-package
+Source: hello
+Version: 1.0-1
+Architecture: arm64
+Maintainer: Your Name <your.email@example.com>
+Installed-Size: 8
+Section: misc
+Priority: optional
+Homepage: https://example.com
+Description: A minimal example package
+ A simple package to demonstrate debian packaging in a Docker container.
