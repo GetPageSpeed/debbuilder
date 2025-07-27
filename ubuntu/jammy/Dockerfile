@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 ubuntu:jammy
+FROM ubuntu:jammy
 LABEL maintainer="Danila Vershinin <info@getpagespeed.com>"
 
 ENV WORKSPACE=/workspace \
