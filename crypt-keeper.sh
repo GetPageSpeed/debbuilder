@@ -36,6 +36,8 @@ ENV WORKSPACE=${WORKSPACE} \\
     OUTPUT=${OUTPUT} \\
     DEB_BUILD_DIR=${DEB_BUILD_DIR}
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 ADD ./assets/build /usr/bin/build
 #ADD ./assets/deblint.config /etc/deblint/config
 ADD ./assets/transient/* /tmp/
@@ -67,42 +69,42 @@ function map-all() {
 function docker-image-name() {
     DISTRO=${1}
     VERSION=${2}
-    echo -n "${DOCKER_REGISTRY_USER}/debuilder:${DISTRO/\//-}-${VERSION}"
+    echo -n "${DOCKER_REGISTRY_USER}/debbuilder:${DISTRO/\//-}-${VERSION}"
 }
 
 function docker-image-alt-name() {
     DISTRO=${1}
     VERSION=${2}
     DIST=${DISTRO_DISTS[$DISTRO]}
-    echo -n "${DOCKER_REGISTRY_USER}/debuilder:${DIST}${VERSION}"
+    echo -n "${DOCKER_REGISTRY_USER}/debbuilder:${DIST}${VERSION}"
 }
 
 function docker-image-dist-tag() {
     DISTRO=${1}
     VERSION=${2}
-    
+
     # Create dist tags using version numbers (similar to RPM's %{?dist} system)
     # This matches patterns like ubuntu.24.04 seen in Plesk repositories
     case "${DISTRO}" in
         ubuntu)
             case "${VERSION}" in
-                focal) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu20.04" ;;
-                jammy) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu22.04" ;;
-                noble) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu24.04" ;;
-                kinetic) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu22.10" ;;
-                *) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ubuntu${VERSION}" ;;
+                focal) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu20.04" ;;
+                jammy) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu22.04" ;;
+                noble) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu24.04" ;;
+                kinetic) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu22.10" ;;
+                *) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu${VERSION}" ;;
             esac
             ;;
         debian)
             case "${VERSION}" in
-                bookworm) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian12" ;;
-                trixie) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian13" ;;
-                sid) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian-sid" ;;
-                *) echo -n "${DOCKER_REGISTRY_USER}/debuilder:debian${VERSION}" ;;
+                bookworm) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian12" ;;
+                trixie) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian13" ;;
+                sid) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian-sid" ;;
+                *) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian${VERSION}" ;;
             esac
             ;;
         *)
-            echo -n "${DOCKER_REGISTRY_USER}/debuilder:${DISTRO}${VERSION}"
+            echo -n "${DOCKER_REGISTRY_USER}/debbuilder:${DISTRO}${VERSION}"
             ;;
     esac
 }
@@ -113,14 +115,14 @@ function build() {
     MAIN_TAG="$(docker-image-name "${DISTRO}" "${VERSION}")"
     ALT_TAG="$(docker-image-alt-name "${DISTRO}" "${VERSION}")"
     DIST_TAG="$(docker-image-dist-tag "${DISTRO}" "${VERSION}")"
-    
+
     # Ensure buildx is set up and ready for multi-architecture builds
     docker buildx create --use --name multiarch-builder --driver docker-container || true
-    
+
     echo "Building multi-architecture image for ${DISTRO}-${VERSION}"
     echo "Tags: ${MAIN_TAG}, ${ALT_TAG}, ${DIST_TAG}"
     echo "Platforms: linux/amd64, linux/arm64"
-    
+
     cd "${DISTRO}/${VERSION}" && docker buildx build \
         --platform linux/amd64,linux/arm64 \
         --push \
@@ -140,19 +142,19 @@ function test() {
     DISTRO=${1}
     VERSION=${2}
     MAIN_TAG="$(docker-image-name "${DISTRO}" "${VERSION}")"
-    
+
     echo "Testing x86_64 build for ${DISTRO}-${VERSION}"
     docker run --rm --platform linux/amd64 \
         -v "$(pwd)"/tests:/sources \
         -v "$(pwd)"/output:/output \
         "${MAIN_TAG}" build
-    
+
     echo "Testing aarch64 build for ${DISTRO}-${VERSION}"
     docker run --rm --platform linux/arm64 \
         -v "$(pwd)"/tests:/sources \
         -v "$(pwd)"/output:/output \
         "${MAIN_TAG}" build
-    
+
     echo "Done testing both architectures for ${DISTRO}-${VERSION}"
 }
 

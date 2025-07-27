@@ -56,25 +56,25 @@ Similar to RPM's `%{?dist}` system, the debbuilder uses multiple tag formats for
 
 #### 1. Primary Tags (Full Names)
 ```
-getpagespeed/debuilder:ubuntu-noble
-getpagespeed/debuilder:ubuntu-jammy
-getpagespeed/debuilder:debian-bookworm
+getpagespeed/debbuilder:ubuntu-noble
+getpagespeed/debbuilder:ubuntu-jammy
+getpagespeed/debbuilder:debian-bookworm
 ```
 
 #### 2. Dist Tags (Version Numbers - Similar to RPM %{?dist})
 ```
-getpagespeed/debuilder:ubuntu24.04  # noble/24.04
-getpagespeed/debuilder:ubuntu22.04  # jammy/22.04
-getpagespeed/debuilder:ubuntu20.04  # focal/20.04
-getpagespeed/debuilder:debian12     # bookworm/12
-getpagespeed/debuilder:debian13     # trixie/13
+getpagespeed/debbuilder:ubuntu24.04  # noble/24.04
+getpagespeed/debbuilder:ubuntu22.04  # jammy/22.04
+getpagespeed/debbuilder:ubuntu20.04  # focal/20.04
+getpagespeed/debbuilder:debian12     # bookworm/12
+getpagespeed/debbuilder:debian13     # trixie/13
 ```
 
 #### 3. Alternative Tags (Short Names)
 ```
-getpagespeed/debuilder:ubuntunoble
-getpagespeed/debuilder:ubuntujammy
-getpagespeed/debuilder:debianbookworm
+getpagespeed/debbuilder:ubuntunoble
+getpagespeed/debbuilder:ubuntujammy
+getpagespeed/debbuilder:debianbookworm
 ```
 
 ### Comparison with RPM System
@@ -90,19 +90,19 @@ getpagespeed/debuilder:debianbookworm
 #### For CI/CD Pipelines
 Use dist tags for consistency (similar to RPM's el7, fc38):
 ```bash
-docker run getpagespeed/debuilder:ubuntu24.04
+docker run getpagespeed/debbuilder:ubuntu24.04
 ```
 
 #### For Development
 Use full names for clarity:
 ```bash
-docker run getpagespeed/debuilder:ubuntu-noble
+docker run getpagespeed/debbuilder:ubuntu-noble
 ```
 
 #### For Scripts
 Use short names for brevity:
 ```bash
-docker run getpagespeed/debuilder:ubuntunoble
+docker run getpagespeed/debbuilder:ubuntunoble
 ```
 
 ### Adding New Versions
@@ -117,7 +117,7 @@ When adding new Ubuntu/Debian versions:
 2. **Update dist tag mapping** in `crypt-keeper.sh`:
    ```bash
    case "${VERSION}" in
-       kinetic) echo -n "${DOCKER_REGISTRY_USER}/debuilder:ub22.10" ;;
+       kinetic) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ub22.10" ;;
    ```
 
 3. **Generate and test**:
