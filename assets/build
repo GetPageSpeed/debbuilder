@@ -131,7 +131,7 @@ build_package() {
             done
             
             # Also check for version references in the main directory
-            for file in *.py *.txt *.md *.rst 2>/dev/null; do
+            for file in *.py *.txt *.md *.rst; do
                 if [[ -f "$file" ]]; then
                     # Update any remaining VERSION placeholders
                     if grep -q "VERSION" "$file"; then
