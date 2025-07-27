@@ -13,13 +13,10 @@ ADD ./assets/transient/* /tmp/
 # Optimize apt settings for faster downloads
 RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
-    echo 'Acquire::ftp::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries
-
-# Fix GPG keys manually by downloading them directly
-RUN apt-get update --allow-releaseinfo-change || true && \
-    apt-get install -y wget ca-certificates gnupg && \
-    wget -O - https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg | apt-key add - || true && \
+    echo 'Acquire::ftp::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
     apt-get update
+
+RUN apt-get install -y equivs
 
 RUN DISTRO=ubuntu RELEASE=jammy /tmp/setup.sh
 
