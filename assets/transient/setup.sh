@@ -2,6 +2,9 @@
 shopt -s extglob
 set -euxo pipefail
 
+# Set non-interactive frontend to avoid prompts during package installation
+export DEBIAN_FRONTEND=noninteractive
+
 # Detect the distribution and release
 if test -f /etc/os-release; then
    . /etc/os-release

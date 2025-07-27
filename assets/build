@@ -3,6 +3,9 @@
 # use exit codes of failing commands
 set -exo pipefail
 
+# Set non-interactive frontend to avoid prompts during package installation
+export DEBIAN_FRONTEND=noninteractive
+
 SOURCES=${SOURCES-/sources}
 OUTPUT=${OUTPUT-${SOURCES}}
 
