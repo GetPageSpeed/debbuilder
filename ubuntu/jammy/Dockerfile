@@ -15,14 +15,11 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::ftp::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries
 
-# Fix repository URLs for different architectures before first update
-RUN if [[ $(uname -m) == "aarch64" || $(uname -m) == "arm64" ]]; then \
-        sed -i 's|ports.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list && \
-        sed -i 's|ubuntu-ports|ubuntu|g' /etc/apt/sources.list; \
-    fi
-
-# Update GPG keys to fix signature issues
-RUN apt-get update --allow-releaseinfo-change || true
+# Fix GPG keys and update package lists
+RUN apt-get update --allow-releaseinfo-change || true && \
+    apt-get install -y ca-certificates gnupg && \
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32 871920D1991BC93F || true && \
+    apt-get update
 
 RUN DISTRO=ubuntu RELEASE=jammy /tmp/setup.sh
 
