@@ -54,6 +54,9 @@ if [[ $(uname -m) == "aarch64" || $(uname -m) == "arm64" ]]; then
     ${PKGR} update -y
 fi
 
+# Ensure package lists are populated
+${PKGR} update -y
+
 ${PKGR} -y install ${PRE_PACKAGES} || true
 
 # Install the core development and packaging tools
