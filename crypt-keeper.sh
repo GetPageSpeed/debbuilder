@@ -46,6 +46,8 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \\
     echo 'Acquire::ftp::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \\
     apt-get update
 
+RUN apt-get install -y equivs
+
 RUN DISTRO=${DISTRO} RELEASE=${RELEASE} /tmp/setup.sh
 
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

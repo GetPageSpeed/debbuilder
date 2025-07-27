@@ -45,17 +45,6 @@ fi
 
 # Update the package index and install necessary build tools
 ${PKGR} update -y
-
-# Fix repository URLs for different architectures
-if [[ $(uname -m) == "aarch64" || $(uname -m) == "arm64" ]]; then
-    # For ARM64, use the correct repository URLs
-    sed -i 's|ports.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list
-    sed -i 's|ubuntu-ports|ubuntu|g' /etc/apt/sources.list
-fi
-
-# Always update package lists after any sources.list change and before any install
-${PKGR} update -y
-
 ${PKGR} -y install ${PRE_PACKAGES} || true
 
 # Install the core development and packaging tools
