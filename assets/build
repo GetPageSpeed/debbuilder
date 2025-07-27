@@ -178,12 +178,17 @@ build_package() {
     ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
     echo "Etc/UTC" > /etc/timezone
     
-    mk-build-deps -t "apt-get --no-install-recommends -y" -ir || {
+    # Pre-install tzdata with specific configuration to avoid prompts
+    apt-get update
+    env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" tzdata
+    
+    # Now try mk-build-deps with the same environment
+    env DEBIAN_FRONTEND=noninteractive mk-build-deps -t "apt-get --no-install-recommends -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold" -ir || {
         echo "Failed to install build dependencies. Trying alternative approach..."
         # Try installing dependencies manually if mk-build-deps fails
         apt-get update
         # Use additional flags to ensure non-interactive installation
-        apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dh-python python3-all python3-setuptools python3-pytest python3-packaging python3-cachecontrol python3-appdirs python3-feedparser python3-yaml python3-tqdm python3-bs4 python3-html5lib python3-dateutil python3-distro pandoc || {
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dh-python python3-all python3-setuptools python3-pytest python3-packaging python3-cachecontrol python3-appdirs python3-feedparser python3-yaml python3-tqdm python3-bs4 python3-html5lib python3-dateutil python3-distro pandoc || {
             echo "Failed to install build dependencies manually"
             return 1
         }
