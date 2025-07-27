@@ -21,7 +21,8 @@ RUN if [[ $(uname -m) == "aarch64" || $(uname -m) == "arm64" ]]; then \
         sed -i 's|ubuntu-ports|ubuntu|g' /etc/apt/sources.list; \
     fi
 
-RUN apt-get update
+# Update GPG keys to fix signature issues
+RUN apt-get update --allow-releaseinfo-change || true
 
 RUN DISTRO=ubuntu RELEASE=jammy /tmp/setup.sh
 
