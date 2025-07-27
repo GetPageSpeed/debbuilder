@@ -6,6 +6,10 @@ set -exo pipefail
 # Set non-interactive frontend to avoid prompts during package installation
 export DEBIAN_FRONTEND=noninteractive
 
+# Pre-configure timezone to avoid tzdata interactive prompts
+echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
+echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
+
 SOURCES=${SOURCES-/sources}
 OUTPUT=${OUTPUT-${SOURCES}}
 
