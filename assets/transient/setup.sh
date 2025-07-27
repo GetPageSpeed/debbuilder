@@ -5,6 +5,10 @@ set -euxo pipefail
 # Set non-interactive frontend to avoid prompts during package installation
 export DEBIAN_FRONTEND=noninteractive
 
+# Pre-configure timezone to avoid tzdata interactive prompts
+echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
+echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
+
 # Detect the distribution and release
 if test -f /etc/os-release; then
    . /etc/os-release
