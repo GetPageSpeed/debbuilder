@@ -13,6 +13,10 @@ OUTPUT=${OUTPUT-${SOURCES}}
 FORCE=false
 ENABLE_REPOS=""
 EXTERNAL_BUILD_SCRIPT=""
+NO_FETCH=false
+
+# Store original arguments for checking --no-fetch
+ORIGINAL_ARGS="$*"
 
 # Loop through the arguments
 while [[ "$1" != "" ]]; do
@@ -39,7 +43,7 @@ while [[ "$1" != "" ]]; do
             fi
             ;;
         --no-fetch )
-            # Skip fetching latest version
+            NO_FETCH=true
             ;;
         * )
             echo "Invalid option: $1"
@@ -63,7 +67,7 @@ fi
 # Try to fetch and execute the latest build script from GitHub
 # This allows getting the latest build logic without rebuilding Docker images
 # We add --no-fetch to prevent infinite recursion
-if [[ "$*" != *"--no-fetch"* ]]; then
+if [[ "$NO_FETCH" != "true" ]]; then
     echo "Attempting to fetch latest build script from GitHub..."
     if curl -fsSL "https://raw.githubusercontent.com/GetPageSpeed/debbuilder/refs/heads/main/assets/build" > /tmp/latest-build.sh; then
         chmod +x /tmp/latest-build.sh
