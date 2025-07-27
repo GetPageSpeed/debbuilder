@@ -87,6 +87,23 @@ build_package() {
             echo "Failed to run setup script for ${source_dir}."
             return 1
         }
+        
+        # After setup.sh, we might be in a different directory
+        # Find the debian directory to determine where to install dependencies
+        if [[ -d "debian" ]]; then
+            echo "Found debian directory in current location"
+            DEBIAN_DIR="."
+        else
+            # Look for debian directory in subdirectories
+            DEBIAN_DIR=$(find . -name "debian" -type d | head -1 | xargs dirname)
+            if [[ -n "${DEBIAN_DIR}" ]]; then
+                echo "Found debian directory in: ${DEBIAN_DIR}"
+                cd "${DEBIAN_DIR}"
+            else
+                echo "Error: No debian directory found after setup.sh"
+                return 1
+            fi
+        fi
     fi
 
     # Check if we need to read from debmacros and update changelog
@@ -148,8 +165,17 @@ build_package() {
     # Clean up old build artifacts
     debuild clean || true
 
-    # Install build dependencies
-    mk-build-deps -t "apt-get --no-install-recommends -y" -ir || true
+    # Install build dependencies from the current directory (which should have debian/control)
+    echo "Installing build dependencies from $(pwd)..."
+    mk-build-deps -t "apt-get --no-install-recommends -y" -ir || {
+        echo "Failed to install build dependencies. Trying alternative approach..."
+        # Try installing dependencies manually if mk-build-deps fails
+        apt-get update
+        apt-get install -y dh-python python3-all python3-setuptools python3-pytest python3-packaging python3-cachecontrol python3-appdirs python3-feedparser python3-yaml python3-tqdm python3-bs4 python3-html5lib python3-dateutil python3-distro pandoc || {
+            echo "Failed to install build dependencies manually"
+            return 1
+        }
+    }
 
     # Build the package
     debuild -us -uc -b || {
