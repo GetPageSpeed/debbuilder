@@ -15,10 +15,10 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::ftp::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries
 
-# Fix GPG keys and update package lists
+# Fix GPG keys manually by downloading them directly
 RUN apt-get update --allow-releaseinfo-change || true && \
-    apt-get install -y ca-certificates gnupg && \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32 871920D1991BC93F || true && \
+    apt-get install -y wget ca-certificates gnupg && \
+    wget -O - https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg | apt-key add - || true && \
     apt-get update
 
 RUN DISTRO=ubuntu RELEASE=jammy /tmp/setup.sh
