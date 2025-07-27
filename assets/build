@@ -79,6 +79,72 @@ build_package() {
         return 0
     fi
 
+    # Check if this package requires special setup
+    if [[ -f "setup.sh" ]]; then
+        echo "Running setup script for ${source_dir}..."
+        chmod +x setup.sh
+        ./setup.sh || {
+            echo "Failed to run setup script for ${source_dir}."
+            return 1
+        }
+    fi
+
+    # Check if we need to read from debmacros and update changelog
+    if [[ -f "debmacros" ]]; then
+        echo "Reading version from debmacros..."
+        
+        # Try to find version in debmacros - look for common patterns
+        VERSION=""
+        if grep -q "%lastversion_version" debmacros; then
+            VERSION=$(grep "%lastversion_version" debmacros | awk '{print $2}')
+        elif grep -q "%version" debmacros; then
+            VERSION=$(grep "%version" debmacros | awk '{print $2}')
+        elif grep -q "VERSION" debmacros; then
+            VERSION=$(grep "VERSION" debmacros | awk '{print $2}')
+        fi
+        
+        if [[ -n "${VERSION}" ]]; then
+            echo "Updating version references with version ${VERSION} and distribution ${DISTRO}..."
+            
+            # Update changelog if it exists
+            if [[ -f "debian/changelog" ]]; then
+                sed -i "s/VERSION/${VERSION}/g" debian/changelog
+                sed -i "s/DISTRO/${DISTRO}/g" debian/changelog
+                echo "Updated debian/changelog"
+            fi
+            
+            # Update any other files that might contain version references
+            # Look for common patterns in debian directory
+            for file in debian/*; do
+                if [[ -f "$file" ]]; then
+                    # Update any remaining VERSION placeholders
+                    if grep -q "VERSION" "$file"; then
+                        sed -i "s/VERSION/${VERSION}/g" "$file"
+                        echo "Updated version references in $file"
+                    fi
+                    # Update any remaining DISTRO placeholders
+                    if grep -q "DISTRO" "$file"; then
+                        sed -i "s/DISTRO/${DISTRO}/g" "$file"
+                        echo "Updated distribution references in $file"
+                    fi
+                fi
+            done
+            
+            # Also check for version references in the main directory
+            for file in *.py *.txt *.md *.rst 2>/dev/null; do
+                if [[ -f "$file" ]]; then
+                    # Update any remaining VERSION placeholders
+                    if grep -q "VERSION" "$file"; then
+                        sed -i "s/VERSION/${VERSION}/g" "$file"
+                        echo "Updated version references in $file"
+                    fi
+                fi
+            done
+        else
+            echo "Warning: No version found in debmacros file"
+        fi
+    fi
+
     # Clean up old build artifacts
     debuild clean || true
 
@@ -96,6 +162,25 @@ build_package() {
     mv ../*.deb "${OUTPUT}/"
     mv ../*.buildinfo "${OUTPUT}/"
     mv ../*.changes "${OUTPUT}/"
+    
+    # Rename packages to include distribution if DISTRO is set
+    if [[ -n "${DISTRO}" ]]; then
+        cd "${OUTPUT}"
+        for deb in *.deb; do
+            if [[ -f "$deb" ]]; then
+                # Extract current version from the deb filename
+                current_version=$(echo "$deb" | sed -n 's/.*_\([0-9]\+\.[0-9]\+\.[0-9]\+\)-[0-9]_.*/\1/p')
+                if [[ -n "$current_version" ]]; then
+                    newname=$(echo "$deb" | sed "s/_${current_version}-[0-9]_/_${current_version}-1.${DISTRO}_/")
+                    if [[ "$deb" != "$newname" ]]; then
+                        mv "$deb" "$newname"
+                        echo "Renamed: $deb -> $newname"
+                    fi
+                fi
+            fi
+        done
+    fi
+    
     echo "Package built successfully for ${source_dir}."
 }
 
