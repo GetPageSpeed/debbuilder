@@ -6,10 +6,6 @@ set -exo pipefail
 # Set non-interactive frontend to avoid prompts during package installation
 export DEBIAN_FRONTEND=noninteractive
 
-# Pre-configure timezone to avoid tzdata interactive prompts
-echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
-echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
-
 SOURCES=${SOURCES-/sources}
 OUTPUT=${OUTPUT-${SOURCES}}
 
@@ -174,11 +170,20 @@ build_package() {
 
     # Install build dependencies from the current directory (which should have debian/control)
     echo "Installing build dependencies from $(pwd)..."
+    
+    # Pre-configure timezone to avoid tzdata interactive prompts
+    echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
+    echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
+    # Also set the timezone directly
+    ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
+    echo "Etc/UTC" > /etc/timezone
+    
     mk-build-deps -t "apt-get --no-install-recommends -y" -ir || {
         echo "Failed to install build dependencies. Trying alternative approach..."
         # Try installing dependencies manually if mk-build-deps fails
         apt-get update
-        apt-get install -y dh-python python3-all python3-setuptools python3-pytest python3-packaging python3-cachecontrol python3-appdirs python3-feedparser python3-yaml python3-tqdm python3-bs4 python3-html5lib python3-dateutil python3-distro pandoc || {
+        # Use additional flags to ensure non-interactive installation
+        apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dh-python python3-all python3-setuptools python3-pytest python3-packaging python3-cachecontrol python3-appdirs python3-feedparser python3-yaml python3-tqdm python3-bs4 python3-html5lib python3-dateutil python3-distro pandoc || {
             echo "Failed to install build dependencies manually"
             return 1
         }
