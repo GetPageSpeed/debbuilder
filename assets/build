@@ -12,6 +12,7 @@ OUTPUT=${OUTPUT-${SOURCES}}
 # Initialize default values for options and flags
 FORCE=false
 ENABLE_REPOS=""
+EXTERNAL_BUILD_SCRIPT=""
 
 # Loop through the arguments
 while [[ "$1" != "" ]]; do
@@ -28,6 +29,18 @@ while [[ "$1" != "" ]]; do
                 exit 1
             fi
             ;;
+        --external-build-script )
+            shift # Move to the next argument, which should be the URL
+            if [[ -n $1 ]]; then
+                EXTERNAL_BUILD_SCRIPT=$1
+            else
+                echo "Error: --external-build-script requires a URL."
+                exit 1
+            fi
+            ;;
+        --no-fetch )
+            # Skip fetching latest version
+            ;;
         * )
             echo "Invalid option: $1"
             exit 1
@@ -35,6 +48,31 @@ while [[ "$1" != "" ]]; do
     esac
     shift # Move to the next argument
 done
+
+# If external build script is specified, fetch and use it
+if [[ -n "${EXTERNAL_BUILD_SCRIPT}" ]]; then
+    echo "Fetching external build script from: ${EXTERNAL_BUILD_SCRIPT}"
+    if curl -fsSL "${EXTERNAL_BUILD_SCRIPT}" > /tmp/external-build.sh; then
+        chmod +x /tmp/external-build.sh
+        exec /tmp/external-build.sh "$@"
+    else
+        echo "Failed to fetch external build script. Falling back to built-in script."
+    fi
+fi
+
+# Try to fetch and execute the latest build script from GitHub
+# This allows getting the latest build logic without rebuilding Docker images
+# We add --no-fetch to prevent infinite recursion
+if [[ "$*" != *"--no-fetch"* ]]; then
+    echo "Attempting to fetch latest build script from GitHub..."
+    if curl -fsSL "https://raw.githubusercontent.com/GetPageSpeed/debbuilder/refs/heads/main/assets/build" > /tmp/latest-build.sh; then
+        chmod +x /tmp/latest-build.sh
+        echo "Successfully fetched latest build script. Executing..."
+        exec /tmp/latest-build.sh --no-fetch "$@"
+    else
+        echo "Failed to fetch latest build script. Using local version."
+    fi
+fi
 
 # Enable additional repositories if needed
 if [[ -n ${ENABLE_REPOS} ]]; then
@@ -178,16 +216,24 @@ build_package() {
     ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
     echo "Etc/UTC" > /etc/timezone
     
-    mk-build-deps -t "apt-get --no-install-recommends -y" -ir || {
-        echo "Failed to install build dependencies. Trying alternative approach..."
-        # Try installing dependencies manually if mk-build-deps fails
-        apt-get update
-        # Use additional flags to ensure non-interactive installation
-        apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dh-python python3-all python3-setuptools python3-pytest python3-packaging python3-cachecontrol python3-appdirs python3-feedparser python3-yaml python3-tqdm python3-bs4 python3-html5lib python3-dateutil python3-distro pandoc || {
-            echo "Failed to install build dependencies manually"
-            return 1
+    # Check for missing dependencies first
+    if [[ -f "/usr/bin/check-deps.sh" ]]; then
+        echo "Checking build dependencies..."
+        /usr/bin/check-deps.sh || {
+            echo "Dependency check failed. Attempting to install anyway..."
         }
-    }
+    fi
+    
+    # Try to install build dependencies using mk-build-deps
+    if ! mk-build-deps -t "apt-get --no-install-recommends -y" -ir; then
+        echo "Failed to install build dependencies using mk-build-deps."
+        echo "This usually means there are missing packages in the distribution repositories."
+        echo "Please check the debian/control file and ensure all Build-Depends are available."
+        echo ""
+        echo "You can run the dependency checker manually:"
+        echo "  /usr/bin/check-deps.sh"
+        return 1
+    fi
 
     # Build the package
     debuild -us -uc -b || {
