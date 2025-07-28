@@ -117,7 +117,10 @@ check_packages_in_repo() {
 # Build the debian package
 build_package() {
     local source_dir=$1
+    echo "Building package from directory: ${source_dir}"
+    echo "Current directory before cd: $(pwd)"
     cd "$source_dir"
+    echo "Current directory after cd: $(pwd)"
 
     if [ "$FORCE" = true ]; then
         echo "Building package without checking repository because --force is set"
@@ -145,6 +148,55 @@ build_package() {
         echo "No setup.sh found in $(pwd)"
         echo "Directory contents:"
         ls -la
+        
+        # Try to automatically extract source code if needed
+        if [[ -f "debmacros" ]]; then
+            echo "Found debmacros, checking for source code..."
+            
+            # Read version from debmacros
+            VERSION=""
+            if grep -q "%lastversion_version" debmacros; then
+                VERSION=$(grep "%lastversion_version" debmacros | awk '{print $2}')
+            elif grep -q "%version" debmacros; then
+                VERSION=$(grep "%version" debmacros | awk '{print $2}')
+            elif grep -q "VERSION" debmacros; then
+                VERSION=$(grep "VERSION" debmacros | awk '{print $2}')
+            fi
+            
+            if [[ -n "${VERSION}" ]]; then
+                echo "Detected version: ${VERSION}"
+                
+                # Try to determine package name from debian/control or directory name
+                PACKAGE=""
+                if [[ -f "debian/control" ]]; then
+                    PACKAGE=$(grep "^Source:" debian/control | awk '{print $2}')
+                fi
+                if [[ -z "${PACKAGE}" ]]; then
+                    # Fallback to directory name
+                    PACKAGE=$(basename "$(pwd)")
+                fi
+                echo "Detected package name: ${PACKAGE}"
+                
+                # Check if source is already extracted
+                if [[ -d "${PACKAGE}-${VERSION}" ]]; then
+                    echo "Source already extracted in ${PACKAGE}-${VERSION}/"
+                else
+                    # Look for .orig.tar.gz file
+                    ORIG_TARBALL=$(find . -name "*.orig.tar.gz" | head -1)
+                    if [[ -n "${ORIG_TARBALL}" ]]; then
+                        echo "Found source tarball: ${ORIG_TARBALL}"
+                        echo "Extracting source code..."
+                        tar -xzf "${ORIG_TARBALL}" || {
+                            echo "Failed to extract source tarball"
+                            return 1
+                        }
+                        echo "Source extracted successfully"
+                    else
+                        echo "No .orig.tar.gz found, checking if source is already in subdirectory..."
+                    fi
+                fi
+            fi
+        fi
     fi
     
     # After setup.sh, we need to find where the source code and debian directory are
@@ -172,6 +224,22 @@ build_package() {
                 find . -name "debian" -type d 2>/dev/null || echo "No debian directories found"
                 return 1
             fi
+        fi
+    fi
+    
+    # Check if we need to find the source code in a subdirectory
+    # This handles cases where the debian directory is in the parent but source is in a subdirectory
+    if [[ ! -f "setup.py" ]] && [[ ! -f "pyproject.toml" ]] && [[ ! -f "Makefile" ]]; then
+        echo "No build files found in current directory, looking for source in subdirectories..."
+        SOURCE_DIR=$(find . -name "setup.py" -o -name "pyproject.toml" -o -name "Makefile" | head -1 | xargs dirname)
+        if [[ -n "${SOURCE_DIR}" ]]; then
+            echo "Found source directory: ${SOURCE_DIR}"
+            cd "${SOURCE_DIR}"
+            echo "Changed to source directory: $(pwd)"
+        else
+            echo "No source files found in subdirectories"
+            echo "Available files:"
+            find . -type f -name "setup.py" -o -name "pyproject.toml" -o -name "Makefile" 2>/dev/null || echo "No build files found"
         fi
     fi
 
@@ -398,6 +466,10 @@ EOF
 }
 
 # Find all packages and build them
+echo "SOURCES directory: ${SOURCES}"
+echo "Contents of SOURCES:"
+ls -la "${SOURCES}" || echo "Cannot list SOURCES directory"
+
 package_dirs=$(find_packages)
 
 echo "Found package directories:"
