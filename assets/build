@@ -127,8 +127,9 @@ build_package() {
     fi
 
     # Check if this package requires special setup
+    echo "Checking for setup.sh in $(pwd)..."
     if [[ -f "setup.sh" ]]; then
-        echo "Running setup script for ${source_dir}..."
+        echo "Found setup.sh, running setup script for ${source_dir}..."
         echo "Current directory before setup.sh: $(pwd)"
         echo "Directory contents before setup.sh:"
         ls -la
@@ -140,6 +141,11 @@ build_package() {
         echo "Current directory after setup.sh: $(pwd)"
         echo "Directory contents after setup.sh:"
         ls -la
+    else
+        echo "No setup.sh found in $(pwd)"
+        echo "Directory contents:"
+        ls -la
+    fi
         
         # After setup.sh, we need to find where the source code and debian directory are
         # The setup.sh script might have created a subdirectory structure
@@ -394,6 +400,9 @@ EOF
 
 # Find all packages and build them
 package_dirs=$(find_packages)
+
+echo "Found package directories:"
+echo "$package_dirs"
 
 total_modules=$(echo "$package_dirs" | wc -l)
 if [[ "$total_modules" -eq 0 ]]; then
