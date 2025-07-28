@@ -232,10 +232,10 @@ build_package() {
         }
     fi
     
-    # Try to install build dependencies using mk-build-deps
-    echo "Installing build dependencies using mk-build-deps..."
-    if ! mk-build-deps -t "apt-get --no-install-recommends -y" -ir; then
-        echo "Failed to install build dependencies using mk-build-deps."
+    # Try to install build dependencies using apt-get build-dep
+    echo "Installing build dependencies using apt-get build-dep..."
+    if ! apt-get build-dep -y .; then
+        echo "Failed to install build dependencies using apt-get build-dep."
         echo "This usually means there are missing packages in the distribution repositories."
         echo ""
         echo "Checking which packages are missing..."
