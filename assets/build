@@ -146,32 +146,31 @@ build_package() {
         echo "Directory contents:"
         ls -la
     fi
-        
-        # After setup.sh, we need to find where the source code and debian directory are
-        # The setup.sh script might have created a subdirectory structure
-        if [[ -d "debian" ]]; then
-            echo "Found debian directory in current location"
-            DEBIAN_DIR="."
+    
+    # After setup.sh, we need to find where the source code and debian directory are
+    # The setup.sh script might have created a subdirectory structure
+    if [[ -d "debian" ]]; then
+        echo "Found debian directory in current location"
+        DEBIAN_DIR="."
+    else
+        # Look for debian directory in subdirectories
+        DEBIAN_DIR=$(find . -name "debian" -type d | head -1 | xargs dirname)
+        if [[ -n "${DEBIAN_DIR}" ]]; then
+            echo "Found debian directory in: ${DEBIAN_DIR}"
+            cd "${DEBIAN_DIR}"
         else
-            # Look for debian directory in subdirectories
-            DEBIAN_DIR=$(find . -name "debian" -type d | head -1 | xargs dirname)
-            if [[ -n "${DEBIAN_DIR}" ]]; then
-                echo "Found debian directory in: ${DEBIAN_DIR}"
-                cd "${DEBIAN_DIR}"
+            # If no debian directory found, check if we're in a subdirectory that was created by setup.sh
+            # Look for setup.py or other build files to determine if this is the source directory
+            if [[ -f "setup.py" ]] || [[ -f "pyproject.toml" ]] || [[ -f "Makefile" ]]; then
+                echo "Found source directory with build files in current location"
+                DEBIAN_DIR="."
             else
-                # If no debian directory found, check if we're in a subdirectory that was created by setup.sh
-                # Look for setup.py or other build files to determine if this is the source directory
-                if [[ -f "setup.py" ]] || [[ -f "pyproject.toml" ]] || [[ -f "Makefile" ]]; then
-                    echo "Found source directory with build files in current location"
-                    DEBIAN_DIR="."
-                else
-                    echo "Error: No debian directory or source files found after setup.sh"
-                    echo "Current directory contents:"
-                    ls -la
-                    echo "Looking for debian directories:"
-                    find . -name "debian" -type d 2>/dev/null || echo "No debian directories found"
-                    return 1
-                fi
+                echo "Error: No debian directory or source files found after setup.sh"
+                echo "Current directory contents:"
+                ls -la
+                echo "Looking for debian directories:"
+                find . -name "debian" -type d 2>/dev/null || echo "No debian directories found"
+                return 1
             fi
         fi
     fi
