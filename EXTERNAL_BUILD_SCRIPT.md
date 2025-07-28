@@ -77,10 +77,12 @@ This ensures you always get the latest build logic without waiting for Docker im
 
 To prevent infinite recursion, the system works as follows:
 
-1. **Local script** checks if `--no-fetch` is present
-2. **If not present**: Fetches latest version and executes it with `--no-fetch`
-3. **Fetched script**: Sees `--no-fetch` and skips fetching, runs normally
+1. **Local script** stores `--no-fetch` flag in `NO_FETCH` variable during argument parsing
+2. **If `NO_FETCH` is false**: Fetches latest version and executes it with `--no-fetch`
+3. **Fetched script**: Processes `--no-fetch` and sets `NO_FETCH=true`, skips fetching
 4. **Result**: Only one fetch per execution, no infinite loops
+
+**Fixed**: Previously there was a bug where `--no-fetch` was consumed during argument parsing, causing infinite recursion. This has been resolved by properly storing the flag before processing arguments.
 
 ```
 Execution Flow:
