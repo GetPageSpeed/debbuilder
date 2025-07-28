@@ -69,7 +69,9 @@ fi
 # We add --no-fetch to prevent infinite recursion
 if [[ "$NO_FETCH" != "true" ]]; then
     echo "Attempting to fetch latest build script from GitHub..."
-    if curl -fsSL "https://raw.githubusercontent.com/GetPageSpeed/debbuilder/refs/heads/main/assets/build" > /tmp/latest-build.sh; then
+    # Add cache busting to prevent GitHub from serving cached versions
+    cache_buster=$(date +%s)
+    if curl -fsSL "https://raw.githubusercontent.com/GetPageSpeed/debbuilder/refs/heads/main/assets/build?${cache_buster}" > /tmp/latest-build.sh; then
         chmod +x /tmp/latest-build.sh
         echo "Successfully fetched latest build script. Executing..."
         exec /tmp/latest-build.sh --no-fetch "$@"
