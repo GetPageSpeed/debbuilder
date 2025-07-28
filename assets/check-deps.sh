@@ -25,11 +25,47 @@ suggest_alternatives() {
             echo "   💡 Alternative: python3-appdirs might be available as python3-appdirs2 or similar"
             echo "   💡 Or you can add it to debian/control as a conditional dependency"
             ;;
+        python3-appdirs2)
+            echo "   💡 Alternative: python3-appdirs2 might be available as python3-appdirs or similar"
+            echo "   💡 Or you can add it to debian/control as a conditional dependency"
+            ;;
         python3-requests)
             echo "   💡 Alternative: python3-urllib3 or python3-httplib2"
             ;;
+        python3-cachecontrol)
+            echo "   💡 Alternative: python3-cachecontrol might not be available in this distribution"
+            echo "   💡 Consider using python3-requests-cache or similar"
+            ;;
+        python3-bs4)
+            echo "   💡 Alternative: python3-beautifulsoup4"
+            ;;
+        python3-beautifulsoup4)
+            echo "   💡 Alternative: python3-bs4"
+            ;;
+        python3-html5lib)
+            echo "   💡 Alternative: python3-html5lib might not be available in this distribution"
+            echo "   💡 Consider using python3-lxml or similar"
+            ;;
+        python3-lxml)
+            echo "   💡 Alternative: python3-html5lib"
+            ;;
+        python3-cachecontrol)
+            echo "   💡 Alternative: python3-cachecontrol might not be available in this distribution"
+            echo "   💡 Consider using python3-requests-cache or similar"
+            ;;
+        python3-requests-cache)
+            echo "   💡 Alternative: python3-cachecontrol"
+            ;;
+        pandoc)
+            echo "   💡 Alternative: pandoc might not be available in this distribution"
+            echo "   💡 Consider making it optional or using python3-docutils"
+            ;;
+        python3-docutils)
+            echo "   💡 Alternative: pandoc"
+            ;;
         *)
             echo "   💡 Check if this package has a different name in this distribution"
+            echo "   💡 Try: apt-cache search $package"
             ;;
     esac
 }
@@ -46,12 +82,36 @@ if [[ -f "debian/control" ]]; then
     while IFS= read -r dep; do
         # Skip empty lines and version constraints for now
         if [[ -n "$dep" && ! "$dep" =~ ^[[:space:]]*$ ]]; then
-            # Extract package name (remove version constraints)
-            package=$(echo "$dep" | sed 's/[[:space:]]*([^)]*)[[:space:]]*$//')
-            
-            if ! check_package "$package"; then
-                missing_packages+=("$package")
-                suggest_alternatives "$package"
+            # Handle conditional dependencies (e.g., "package1 | package2")
+            if [[ "$dep" == *"|"* ]]; then
+                # Split by | and check each alternative
+                alternatives=$(echo "$dep" | tr '|' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                found_alternative=false
+                
+                while IFS= read -r alt; do
+                    # Extract package name (remove version constraints)
+                    package=$(echo "$alt" | sed 's/[[:space:]]*([^)]*)[[:space:]]*$//')
+                    
+                    if check_package "$package"; then
+                        echo "✅ Found alternative: $package (for: $dep)"
+                        found_alternative=true
+                        break
+                    fi
+                done <<< "$alternatives"
+                
+                if [[ "$found_alternative" == "false" ]]; then
+                    echo "❌ No alternatives found for: $dep"
+                    missing_packages+=("$dep")
+                    suggest_alternatives "$(echo "$dep" | cut -d'|' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                fi
+            else
+                # Extract package name (remove version constraints)
+                package=$(echo "$dep" | sed 's/[[:space:]]*([^)]*)[[:space:]]*$//')
+                
+                if ! check_package "$package"; then
+                    missing_packages+=("$package")
+                    suggest_alternatives "$package"
+                fi
             fi
         fi
     done <<< "$build_deps"

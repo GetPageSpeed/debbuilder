@@ -223,19 +223,28 @@ build_package() {
     # Check for missing dependencies first
     if [[ -f "/usr/bin/check-deps.sh" ]]; then
         echo "Checking build dependencies..."
+        # Ensure the script has execute permissions
+        chmod +x /usr/bin/check-deps.sh || true
         /usr/bin/check-deps.sh || {
             echo "Dependency check failed. Attempting to install anyway..."
         }
     fi
     
     # Try to install build dependencies using mk-build-deps
+    echo "Installing build dependencies using mk-build-deps..."
     if ! mk-build-deps -t "apt-get --no-install-recommends -y" -ir; then
         echo "Failed to install build dependencies using mk-build-deps."
         echo "This usually means there are missing packages in the distribution repositories."
-        echo "Please check the debian/control file and ensure all Build-Depends are available."
         echo ""
-        echo "You can run the dependency checker manually:"
-        echo "  /usr/bin/check-deps.sh"
+        echo "Checking which packages are missing..."
+        if [[ -f "/usr/bin/check-deps.sh" ]]; then
+            chmod +x /usr/bin/check-deps.sh || true
+            /usr/bin/check-deps.sh
+        fi
+        echo ""
+        echo "You can also check manually:"
+        echo "  apt-cache policy <package-name>"
+        echo "  apt-cache search <package-name>"
         return 1
     fi
 
