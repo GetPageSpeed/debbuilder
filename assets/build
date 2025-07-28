@@ -215,6 +215,79 @@ build_package() {
     # Install build dependencies from the current directory (which should have debian/control)
     echo "Installing build dependencies from $(pwd)..."
     
+    # Update package lists first
+    echo "Updating package lists..."
+    
+    # Try to update package lists, with fallback for GPG issues
+    if ! apt-get update; then
+        echo "Warning: Failed to update package lists, attempting to fix repository configuration..."
+        
+        # Universal approach: Try to fix GPG issues without hardcoding distros
+        echo "Attempting to fix GPG key issues..."
+        
+        # Method 1: Try updating with --allow-unauthenticated
+        if apt-get update --allow-unauthenticated; then
+            echo "Successfully updated package lists with --allow-unauthenticated"
+        else
+            echo "Failed with --allow-unauthenticated, trying to fix GPG keys..."
+            
+            # Method 2: Try to refresh GPG keys
+            if command -v apt-key &>/dev/null; then
+                echo "Refreshing GPG keys..."
+                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138 || true
+                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 0E98404D386FA1D9 || true
+                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517 || true
+            fi
+            
+            # Method 3: Try updating with trusted repositories
+            if ! apt-get update --allow-unauthenticated; then
+                echo "Attempting to configure trusted repositories..."
+                
+                # Backup current sources
+                cp /etc/apt/sources.list /etc/apt/sources.list.backup 2>/dev/null || true
+                
+                # Try to detect the distribution dynamically
+                if [[ -f /etc/os-release ]]; then
+                    source /etc/os-release
+                    DISTRO_NAME="${VERSION_CODENAME:-${ID}}"
+                    echo "Detected distribution: $DISTRO_NAME"
+                elif [[ -f /etc/debian_version ]]; then
+                    # Fallback for older Debian systems - only use known versions
+                    DEBIAN_VERSION=$(cat /etc/debian_version | cut -d. -f1)
+                    case $DEBIAN_VERSION in
+                        12) DISTRO_NAME="bookworm" ;;
+                        13) DISTRO_NAME="trixie" ;;
+                        *)
+                            echo "Error: Unknown Debian version $DEBIAN_VERSION. Cannot safely determine repository."
+                            echo "Please ensure /etc/os-release is available or update this script for new Debian versions."
+                            return 1
+                            ;;
+                    esac
+                    echo "Detected Debian version: $DEBIAN_VERSION -> $DISTRO_NAME"
+                else
+                    echo "Error: Could not detect distribution"
+                    echo "Neither /etc/os-release nor /etc/debian_version found."
+                    return 1
+                fi
+                
+                # Create a minimal trusted sources.list
+                cat > /etc/apt/sources.list << EOF
+deb [trusted=yes] http://deb.debian.org/debian $DISTRO_NAME main
+deb [trusted=yes] http://deb.debian.org/debian $DISTRO_NAME-updates main
+deb [trusted=yes] http://deb.debian.org/debian-security $DISTRO_NAME-security main
+EOF
+                
+                # Try updating with the new configuration
+                if ! apt-get update --allow-unauthenticated; then
+                    echo "Error: Failed to update package lists even after reconfiguring repositories"
+                    echo "Restoring original sources.list..."
+                    cp /etc/apt/sources.list.backup /etc/apt/sources.list 2>/dev/null || true
+                    return 1
+                fi
+            fi
+        fi
+    fi
+    
     # Pre-configure timezone to avoid tzdata interactive prompts
     echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
     echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
@@ -234,20 +307,39 @@ build_package() {
     
     # Try to install build dependencies using apt-get build-dep
     echo "Installing build dependencies using apt-get build-dep..."
-    if ! apt-get build-dep -y .; then
-        echo "Failed to install build dependencies using apt-get build-dep."
-        echo "This usually means there are missing packages in the distribution repositories."
-        echo ""
-        echo "Checking which packages are missing..."
-        if [[ -f "/usr/bin/check-deps.sh" ]]; then
-            chmod +x /usr/bin/check-deps.sh || true
-            /usr/bin/check-deps.sh
+    
+    # First try with normal apt-get
+    if apt-get build-dep -y .; then
+        echo "Successfully installed build dependencies."
+    else
+        echo "Failed to install build dependencies with normal apt-get, trying with --allow-unauthenticated..."
+        
+        # Try with --allow-unauthenticated in case of GPG key issues
+        if apt-get build-dep -y --allow-unauthenticated .; then
+            echo "Successfully installed build dependencies with --allow-unauthenticated."
+        else
+            echo "Failed to install build dependencies using apt-get build-dep."
+            echo "Trying to install dependencies manually..."
+            
+            # Try to install essential build dependencies manually
+            if apt-get install -y debhelper dh-python python3-all python3-setuptools; then
+                echo "Successfully installed build dependencies manually."
+            else
+                echo "Failed to install build dependencies manually as well."
+                echo "This usually means there are missing packages in the distribution repositories."
+                echo ""
+                echo "Checking which packages are missing..."
+                if [[ -f "/usr/bin/check-deps.sh" ]]; then
+                    chmod +x /usr/bin/check-deps.sh || true
+                    /usr/bin/check-deps.sh
+                fi
+                echo ""
+                echo "You can also check manually:"
+                echo "  apt-cache policy <package-name>"
+                echo "  apt-cache search <package-name>"
+                return 1
+            fi
         fi
-        echo ""
-        echo "You can also check manually:"
-        echo "  apt-cache policy <package-name>"
-        echo "  apt-cache search <package-name>"
-        return 1
     fi
 
     # Build the package
