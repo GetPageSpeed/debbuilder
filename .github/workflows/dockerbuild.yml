@@ -22,7 +22,29 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (attempt 1)
+        id: checkout1
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+        continue-on-error: true
+        timeout-minutes: 5
+
+      - name: Checkout (attempt 2)
+        if: ${{ steps.checkout1.outcome == 'failure' }}
+        id: checkout2
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+        continue-on-error: true
+        timeout-minutes: 5
+
+      - name: Checkout (attempt 3)
+        if: ${{ steps.checkout2.outcome == 'failure' }}
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+        timeout-minutes: 5
       
       - name: Generate Dockerfile
         run: ./crypt-keeper.sh generate ${{ matrix.os }} ${{ matrix.version }}
