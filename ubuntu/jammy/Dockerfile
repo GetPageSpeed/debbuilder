@@ -7,6 +7,7 @@ ENV WORKSPACE=/workspace \
     DEB_BUILD_DIR=/debbuild
 
 ADD ./assets/build /usr/bin/build
+ADD ./assets/check-deps.sh /usr/bin/check-deps.sh
 #ADD ./assets/deblint.config /etc/deblint/config
 ADD ./assets/transient/* /tmp/
 
@@ -17,6 +18,7 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
     apt-get update
 
 RUN apt-get install -y equivs
+RUN chmod +x /usr/bin/build /usr/bin/check-deps.sh
 
 RUN DISTRO=ubuntu RELEASE=jammy /tmp/setup.sh
 
