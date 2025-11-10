@@ -328,12 +328,15 @@ build_package() {
         fi
     fi
 
-    # Check if we need to read from debmacros and update changelog
-    if [[ -f "debmacros" ]]; then
+    # Check for version macros and update changelog (support debmacros and rpmmacros)
+    VERSION=""
+    if [[ -f "rpmmacros" ]]; then
+        echo "Reading version from rpmmacros..."
+        if grep -q "%nginx_version" rpmmacros; then
+            VERSION=$(grep "%nginx_version" rpmmacros | awk '{print $2}')
+        fi
+    elif [[ -f "debmacros" ]]; then
         echo "Reading version from debmacros..."
-        
-        # Try to find version in debmacros - look for common patterns
-        VERSION=""
         if grep -q "%lastversion_version" debmacros; then
             VERSION=$(grep "%lastversion_version" debmacros | awk '{print $2}')
         elif grep -q "%version" debmacros; then
@@ -341,65 +344,55 @@ build_package() {
         elif grep -q "VERSION" debmacros; then
             VERSION=$(grep "VERSION" debmacros | awk '{print $2}')
         fi
-        
-        if [[ -n "${VERSION}" ]]; then
-            echo "Updating version references with version ${VERSION} and distribution ${DISTRO}..."
-            
-            # Update changelog if it exists
-            if [[ -f "debian/changelog" ]]; then
-                sed -i "s/VERSION/${VERSION}/g" debian/changelog
-                sed -i "s/DISTRO/${DISTRO}/g" debian/changelog
-                echo "Updated debian/changelog"
-            fi
-            
-            # Update any other files that might contain version references
-            # Look for common patterns in debian directory
-            for file in debian/*; do
-                if [[ -f "$file" ]]; then
-                    # Update any remaining VERSION placeholders
-                    if grep -q "VERSION" "$file"; then
-                        sed -i "s/VERSION/${VERSION}/g" "$file"
-                        echo "Updated version references in $file"
-                    fi
-                    # Update any remaining DISTRO placeholders
-                    if grep -q "DISTRO" "$file"; then
-                        sed -i "s/DISTRO/${DISTRO}/g" "$file"
-                        echo "Updated distribution references in $file"
-                    fi
-                fi
-            done
-            
-            # Also check for version references in the main directory
-            for file in *.py *.txt *.md *.rst; do
-                if [[ -f "$file" ]]; then
-                    # Update any remaining VERSION placeholders
-                    if grep -q "VERSION" "$file"; then
-                        sed -i "s/VERSION/${VERSION}/g" "$file"
-                        echo "Updated version references in $file"
-                    fi
-                fi
-            done
-        else
-            echo "Warning: No version found in debmacros file"
+    fi
+
+    if [[ -n "${VERSION}" ]]; then
+        echo "Updating version references with version ${VERSION} and distribution ${DISTRO}..."
+        # Update changelog if it exists
+        if [[ -f "debian/changelog" ]]; then
+            sed -i "s/VERSION/${VERSION}/g" debian/changelog
+            sed -i "s/DISTRO/${DISTRO}/g" debian/changelog || true
+            echo "Updated debian/changelog"
         fi
+        # Update any other files that might contain version references
+        for file in debian/*; do
+            if [[ -f "$file" ]]; then
+                if grep -q "VERSION" "$file"; then
+                    sed -i "s/VERSION/${VERSION}/g" "$file"
+                    echo "Updated version references in $file"
+                fi
+                if grep -q "DISTRO" "$file"; then
+                    sed -i "s/DISTRO/${DISTRO}/g" "$file"
+                    echo "Updated distribution references in $file"
+                fi
+            fi
+        done
+        for file in *.py *.txt *.md *.rst; do
+            if [[ -f "$file" ]]; then
+                if grep -q "VERSION" "$file"; then
+                    sed -i "s/VERSION/${VERSION}/g" "$file"
+                    echo "Updated version references in $file"
+                fi
+            fi
+        done
+    else
+        echo "Warning: No version found in rpmmacros/debmacros; using existing changelog version."
     fi
 
     # Clean up old build artifacts
-    debuild clean || true
+    if [[ -f "debian/rules" ]]; then
+        make -f debian/rules clean || dh clean || true
+    fi
 
     # Install build dependencies from the current directory (which should have debian/control)
     echo "Installing build dependencies from $(pwd)..."
-    
-    # Update package lists first
+
+    # Ensure package lists are up to date
     echo "Updating package lists..."
-    
-    # Try to update package lists, with fallback for GPG issues
     if ! apt-get update; then
         echo "Warning: Failed to update package lists, attempting to fix repository configuration..."
-        
         # Universal approach: Try to fix GPG issues without hardcoding distros
         echo "Attempting to fix GPG key issues..."
-        
         # Method 1: Try updating with --allow-unauthenticated
         if apt-get update --allow-unauthenticated; then
             echo "Successfully updated package lists with --allow-unauthenticated"
@@ -480,41 +473,35 @@ EOF
         }
     fi
     
-    # Try to install build dependencies using apt-get build-dep
-    echo "Installing build dependencies using apt-get build-dep..."
-    
-    # First try with normal apt-get
-    if apt-get build-dep -y .; then
-        echo "Successfully installed build dependencies."
-    else
-        echo "Failed to install build dependencies with normal apt-get, trying with --allow-unauthenticated..."
-        
-        # Try with --allow-unauthenticated in case of GPG key issues
-        if apt-get build-dep -y --allow-unauthenticated .; then
-            echo "Successfully installed build dependencies with --allow-unauthenticated."
+    # Preferred: install Build-Depends from local debian/control via mk-build-deps
+    if [[ -f "debian/control" ]]; then
+        echo "Attempting to install Build-Depends via mk-build-deps..."
+        if mk-build-deps -t 'apt-get --no-install-recommends -y' -i -r debian/control; then
+            echo "Successfully installed Build-Depends via mk-build-deps."
         else
-            echo "Failed to install build dependencies using apt-get build-dep."
-            echo "Trying to install dependencies manually..."
-            
-            # Try to install essential build dependencies manually
-            if apt-get install -y debhelper dh-python python3-all python3-setuptools; then
-                echo "Successfully installed build dependencies manually."
+            echo "mk-build-deps failed; attempting apt-get build-dep and manual fallback..."
+            # Try apt-get build-dep on the local tree
+            if apt-get build-dep -y .; then
+                echo "Successfully installed build dependencies via apt-get build-dep."
+            elif apt-get build-dep -y --allow-unauthenticated .; then
+                echo "Successfully installed build dependencies with --allow-unauthenticated."
             else
-                echo "Failed to install build dependencies manually as well."
-                echo "This usually means there are missing packages in the distribution repositories."
-                echo ""
-                echo "Checking which packages are missing..."
-                if [[ -f "/usr/bin/check-deps.sh" ]]; then
-                    chmod +x /usr/bin/check-deps.sh || true
-                    /usr/bin/check-deps.sh
+                echo "Falling back to parsing Build-Depends from debian/control..."
+                # Parse Build-Depends (first stanza) into package names (drop versions and alternatives)
+                RAW_DEPS=$(awk '/^Build-Depends:/ {flag=1; sub(/^Build-Depends:[[:space:]]*/,""); print; next} /^[^ ]/ {flag=0} flag {print}' debian/control \
+                    | tr -d '\n' | sed 's/, */\n/g' | sed 's/ (.*)//g' | sed 's/|/ /g' | awk '{print $1}' | grep -v -E '^[[:space:]]*$' || true)
+                if [[ -n "${RAW_DEPS}" ]]; then
+                    echo "Installing parsed Build-Depends: ${RAW_DEPS}"
+                    if ! apt-get install -y --no-install-recommends ${RAW_DEPS}; then
+                        echo "Warning: direct install of parsed Build-Depends failed; continuing."
+                    fi
                 fi
-                echo ""
-                echo "You can also check manually:"
-                echo "  apt-cache policy <package-name>"
-                echo "  apt-cache search <package-name>"
-                return 1
+                # Heuristic: common C toolchain deps (useful for C/C++ projects like nginx)
+                apt-get install -y --no-install-recommends build-essential || true
             fi
         fi
+    else
+        echo "No debian/control found; skipping mk-build-deps."
     fi
 
     # Build the package
@@ -526,6 +513,8 @@ EOF
     # Move built packages to output directory
     mkdir -p "${OUTPUT}"
     mv ../*.deb "${OUTPUT}/"
+    # Include Ubuntu debug packages (.ddeb) if present
+    mv ../*.ddeb "${OUTPUT}/" 2>/dev/null || true
     mv ../*.buildinfo "${OUTPUT}/"
     mv ../*.changes "${OUTPUT}/"
     

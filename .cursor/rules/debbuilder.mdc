@@ -1,0 +1,52 @@
+---
+name: Debbuilder Rules
+description: Debbuilder flow, overrides, dependency policy, and image layout for DEB builds.
+globs:
+  - "debian/**/assets/build"
+  - "ubuntu/**/assets/build"
+  - "assets/build"
+  - "assets/check-deps.sh"
+  - "**/.debbuilder/**"
+tags: ["debbuilder", "packaging", "debian", "ubuntu", "ci"]
+priority: 5
+version: 1.0.0
+---
+
+- Purpose: Debbuilder behavior, overrides, and conventions to streamline iteration.
+- Scope: Applies in this repo only.
+
+- Build flow (high level)
+  - Detect packaging-only tree (no `./configure`, no `./src`). If so, fetch upstream sources.
+  - Prefer `debian/watch` + `uscan --download-version=$VERSION --rename`. If absent/fails, fallback to `%source_url` template.
+  - Resolve version: `rpmmacros` → `debmacros` → `NGINX_VERSION` env → discover latest from upstream (as a last resort).
+  - Extract sources, copy `debian/` into the source dir, apply version substitutions, build with `debuild`, move `.deb` and `.ddeb` to `/output`.
+
+- `%source_url` template
+  - Supported placeholders: `VERSION`, `NAME`, `MAJOR`, `MINOR`, `PATCH`.
+  - Example: `%source_url https://nginx.org/download/nginx-VERSION.tar.gz`
+  - Used only when `debian/watch` cannot fulfill the fetch.
+
+- Overrides for fast iteration
+  - If `/.debbuilder/build` exists in the mounted `/sources` and is executable, it is executed instead of the image-bundled script.
+  - This allows editing the build logic without rebuilding the image. Keep the interface identical to the built-in entrypoint.
+  - Optionally extend this pattern for other tools (e.g., `/.debbuilder/check-deps.sh`) when needed.
+
+- Source of truth and generated files
+  - The single source of truth build script is `assets/build` at the repo root.
+  - Per-suite copies at `debian/*/assets/build` and `ubuntu/*/assets/build` are generated artifacts (via internal tooling such as `crypt-keeper.sh`) and are `.gitignore`d.
+  - Do not edit the generated per-suite scripts. Make changes to `assets/build` and regenerate.
+  - If quick testing is needed without regeneration, use the runtime override `/.debbuilder/build` from the mounted source repo.
+
+- Dependency handling
+  - Non-fatal preflight: run `check-deps.sh` to warn on missing build deps (parsed from `debian/control`).
+  - Install build deps using: `mk-build-deps` → `apt-get build-dep` → manual parse fallback.
+  - Always ensure base essentials like `pkg-config`, `libpcre2-dev`, `zlib1g-dev`, `libssl-dev` are present for nginx builds.
+
+- Idempotency and performance
+  - A `.debbuilder_built` sentinel prevents duplicate builds within a single container run. Remove or use `--force` to rebuild.
+  - Multi-package detection: if the repo contains multiple `debian/` trees (e.g., `nginx-<ver>`), build each once.
+
+- Container images and layout
+  - Images are per-distro/suite: `debbuilder:<distro>-<suite>`, see @debian/bookworm/assets/build, @ubuntu/jammy/assets/build, @ubuntu/noble/assets/build.
+  - Expected mounts: `-v $PWD:/sources`, `-v $PWD/output:/output`.
+  - Non-interactive apt; lintian and devscripts are available in images.
