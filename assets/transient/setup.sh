@@ -33,9 +33,9 @@ PRIMARY_REPO_PACKAGES="https://extras.getpagespeed.com/release-latest.deb"
 # Ensure that multiverse or universe repos are enabled for specific package dependencies
 # If Ubuntu
 if [[ "${ID}" == "ubuntu" ]]; then
-    ${PKGR} -y install software-properties-common
-    add-apt-repository universe
-    add-apt-repository multiverse
+    ${PKGR} -y install software-properties-common || true
+    add-apt-repository -y universe || true
+    add-apt-repository -y multiverse || true
 fi
 
 # Install primary packages (e.g., for GetPageSpeed repo)
@@ -43,8 +43,17 @@ fi
 #dpkg -i /tmp/getpagespeed-release-latest.deb || true
 #rm -f /tmp/getpagespeed-release-latest.deb
 
-# Update the package index and install necessary build tools
-${PKGR} update -y
+# Update the package index (tolerate transient mirror sync issues)
+n=0
+until ${PKGR} update -y; do
+  n=$((n+1))
+  if [ $n -ge 3 ]; then
+    echo "apt-get update failed after ${n} attempts; continuing with possibly stale indexes."
+    break
+  fi
+  echo "apt-get update failed (attempt ${n}); retrying in 5s..."
+  sleep 5
+done
 ${PKGR} -y install ${PRE_PACKAGES} || true
 
 # Install the core development and packaging tools

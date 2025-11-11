@@ -2,6 +2,9 @@
 set -exo pipefail
 DOCKER_REGISTRY_USER=getpagespeed
 
+# Load generated codename -> numeric dist mapping if present
+[ -f "./distmap.sh" ] && . ./distmap.sh
+
 # Declare a map for Ubuntu/Debian codename-based releases
 declare -A DISTRO_DISTS=( [ubuntu]=ubuntu [debian]=debian )
 
@@ -83,6 +86,14 @@ function docker-image-alt-name() {
 function docker-image-dist-tag() {
     DISTRO=${1}
     VERSION=${2}
+
+    # Prefer generated mapping if available
+    if declare -F codename_to_numeric_tag >/dev/null 2>&1; then
+        local dist_tag
+        dist_tag="$(codename_to_numeric_tag "${DISTRO}" "${VERSION}")"
+        echo -n "${DOCKER_REGISTRY_USER}/debbuilder:${dist_tag}"
+        return
+    fi
 
     # Create dist tags using version numbers (similar to RPM's %{?dist} system)
     # This matches patterns like ubuntu.24.04 seen in Plesk repositories

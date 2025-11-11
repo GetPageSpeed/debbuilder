@@ -13,18 +13,23 @@
             "packager": "apt",
             "versions_check": false,
             "versions": [
-                "focal",
-                "jammy",
-                "noble"
+                "20.04",
+                "22.04",
+                "24.04"
             ],
+            "codenames_map": {
+                "20.04": "focal",
+                "22.04": "jammy",
+                "24.04": "noble"
+            },
             "version_overrides": {
-                "focal": {
+                "2004": {
                     "has_plesk": true
                 },
-                "jammy": {
+                "2204": {
                     "has_plesk": true
                 },
-                "noble": {
+                "2404": {
                     "has_plesk": true
                 }
             }
@@ -38,14 +43,18 @@
             "packager": "apt",
             "versions_check": false,
             "versions": [
-                "bookworm",
-                "trixie"
+                12,
+                13
             ],
+            "codenames_map": {
+                "12": "bookworm",
+                "13": "trixie"
+            },
             "version_overrides": {
-                "bookworm": {
+                "12": {
                     "has_plesk": false
                 },
-                "trixie": {
+                "13": {
                     "has_plesk": false
                 }
             }
@@ -110,4 +119,4 @@
             }
         }
     }
-} 
+}
