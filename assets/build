@@ -156,6 +156,7 @@ build_package() {
         # Skip download if already prepared
         if [[ -d "${PACKAGE}-${VERSION}" ]]; then
             echo "Source directory ${PACKAGE}-${VERSION} already present; skipping download."
+            cd "${PACKAGE}-${VERSION}"
         else
             FILENAME="$(basename "${URL}")"
             echo "Downloading ${FILENAME}..."
@@ -174,7 +175,11 @@ build_package() {
                     if [[ -d "debian" ]] && [[ ! -d "${TOPDIR}/debian" ]]; then
                         cp -r debian "${TOPDIR}/"
                     fi
+                    # Enter extracted top-level directory for build
+                    cd "${TOPDIR}"
                 fi
+                # Remove downloaded archive to keep workspace clean
+                rm -f "${FILENAME}" || true
             else
                 echo "Error: failed to download ${URL}"
                 return 1
@@ -185,8 +190,8 @@ build_package() {
         return 1
     fi
     
-    # After setup.sh, we need to find where the source code and debian directory are
-    # The setup.sh script might have created a subdirectory structure
+    # After fetching sources, ensure we are inside the actual source directory containing debian/
+    # If we are still at the original root (no debian/ here), try to locate and enter it
     if [[ -d "debian" ]]; then
         echo "Found debian directory in current location"
         DEBIAN_DIR="."
