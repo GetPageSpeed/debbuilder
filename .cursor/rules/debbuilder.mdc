@@ -9,7 +9,7 @@ globs:
   - "**/.debbuilder/**"
 tags: ["debbuilder", "packaging", "debian", "ubuntu", "ci"]
 priority: 5
-version: 1.0.0
+version: 1.1.0
 ---
 
 - Purpose: Debbuilder behavior, overrides, and conventions to streamline iteration.
@@ -17,14 +17,12 @@ version: 1.0.0
 
 - Build flow (high level)
   - Detect packaging-only tree (no `./configure`, no `./src`). If so, fetch upstream sources.
-  - Prefer `debian/watch` + `uscan --download-version=$VERSION --rename`. If absent/fails, fallback to `%source_url` template.
-  - Resolve version: `rpmmacros` → `debmacros` → `NGINX_VERSION` env → discover latest from upstream (as a last resort).
-  - Extract sources, copy `debian/` into the source dir, apply version substitutions, build with `debuild`, move `.deb` and `.ddeb` to `/output`.
-
-- `%source_url` template
-  - Supported placeholders: `VERSION`, `NAME`, `MAJOR`, `MINOR`, `PATCH`.
-  - Example: `%source_url https://nginx.org/download/nginx-VERSION.tar.gz`
-  - Used only when `debian/watch` cannot fulfill the fetch.
+  - Source of truth for fetching is `upstream.yml` in the repo root only (no `debian/watch`, no `debmacros` fallbacks).
+  - `upstream.yml` keys:
+    - `version`: upstream version string
+    - `source`: URL template with placeholders `{version}` and optional `{name}`
+  - The build script resolves the final URL by substituting placeholders, downloads with `curl -fsSL`, extracts, copies `debian/` into the source dir if needed, then builds via `dpkg-buildpackage`.
+  - Artifacts (`.deb`, `.ddeb`, `.changes`, `.buildinfo`) are written to `/output`.
 
 - Overrides for fast iteration
   - If `/.debbuilder/build` exists in the mounted `/sources` and is executable, it is executed instead of the image-bundled script.
@@ -33,7 +31,7 @@ version: 1.0.0
 
 - Source of truth and generated files
   - The single source of truth build script is `assets/build` at the repo root.
-  - Per-suite copies at `debian/*/assets/build` and `ubuntu/*/assets/build` are generated artifacts (via internal tooling such as `crypt-keeper.sh`) and are `.gitignore`d.
+  - Per-distro copies at `debian/*/assets/build` and `ubuntu/*/assets/build` are generated artifacts (via internal tooling such as `crypt-keeper.sh`) and are `.gitignore`d.
   - Do not edit the generated per-suite scripts. Make changes to `assets/build` and regenerate.
   - If quick testing is needed without regeneration, use the runtime override `/.debbuilder/build` from the mounted source repo.
 
@@ -47,6 +45,39 @@ version: 1.0.0
   - Multi-package detection: if the repo contains multiple `debian/` trees (e.g., `nginx-<ver>`), build each once.
 
 - Container images and layout
-  - Images are per-distro/suite: `debbuilder:<distro>-<suite>`, see @debian/bookworm/assets/build, @ubuntu/jammy/assets/build, @ubuntu/noble/assets/build.
+  - Images are per-distro/dist (versioned dist), not per codename: tags are based on matrix-driven values.
+  - Tag policy:
+    - Ubuntu: dotted numeric tags are primary, e.g., `getpagespeed/debbuilder:ubuntu20.04`, `ubuntu22.04`, `ubuntu24.04`
+    - Debian: numeric tags, e.g., `getpagespeed/debbuilder:debian12`, `debian13`
+    - Aliases are also pushed:
+      - Hyphen-codename alias, e.g., `getpagespeed/debbuilder:ubuntu-jammy`, `debian-bookworm`
+      - Legacy codename alias without hyphen, e.g., `getpagespeed/debbuilder:ubuntujammy` (kept for backward compatibility)
   - Expected mounts: `-v $PWD:/sources`, `-v $PWD/output:/output`.
   - Non-interactive apt; lintian and devscripts are available in images.
+
+- Matrix-driven configuration and mapping
+  - `buildstrap-deb/matrix.yml` is the single source of truth for distros/versions:
+    - Ubuntu `versions` are dotted strings `"20.04"`, `"22.04"`, `"24.04"`
+    - Debian `versions` are numeric strings `"12"`, `"13"`
+    - `codenames_map` maps numeric/dotted to codenames (e.g., `"22.04": jammy`, `"12": bookworm`)
+  - `buildstrap-deb/generate_config.py` writes into this repo:
+    - `matrix.json`: copy of matrix for local tooling
+    - `defaults`: lines like `ubuntu jammy`, `debian bookworm` (used by `crypt-keeper.sh`)
+    - `distro_versions.json`: GH Actions matrix entries with `{"os": "ubuntu", "version": "jammy"}`, etc.
+    - `distmap.sh`: generated map from codename → numeric tag; sourced by `crypt-keeper.sh`
+  - `crypt-keeper.sh`:
+    - Sources `./distmap.sh` when present
+    - Computes Docker tag for dist with `codename_to_numeric_tag` (Ubuntu yields dotted tags; Debian yields numeric)
+    - Uses `docker buildx` to build and push for `linux/amd64, linux/arm64` with all aliases in one invocation
+
+- Deploy and repository publishing
+  - CI uses `DIST` (not `SUITE`) consistently. The deploy path is:
+    `~/incoming-deb/${CIRCLE_PROJECT_REPONAME}/${DISTRO}/${DIST}/${ARCH}/${CIRCLE_BRANCH}/`
+  - `builder-scripts/incoming-deb.sh` expects `<project>/<distro>/<dist>/<arch>/<branch>/`
+    and runs `reprepro -b . includedeb "${DIST}" *.deb`.
+  - `buildstrap-deb/generate_reprepro_distributions.py` generates `conf/distributions` suites
+    using versioned dists (e.g., `ubuntu20.04`, `debian12`) and optional `-mainline` suites.
+
+- Upstream sources
+  - `upstream.yml` is the only source of truth for upstream version and tarball URL template.
+  - No use of `debian/watch`, `uscan`, `debmacros` or `Homepage`/`Vcs-*` fallbacks during fetch.

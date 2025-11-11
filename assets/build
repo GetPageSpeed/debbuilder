@@ -129,159 +129,60 @@ build_package() {
         return 0
     fi
 
-    # Automatically download and prepare source code if needed
-    if [[ -f "debmacros" ]]; then
-        echo "Found debmacros, checking for source code..."
-        
-        # Read version from debmacros
-        VERSION=""
-        if grep -q "%lastversion_version" debmacros; then
-            VERSION=$(grep "%lastversion_version" debmacros | awk '{print $2}')
-        elif grep -q "%version" debmacros; then
-            VERSION=$(grep "%version" debmacros | awk '{print $2}')
-        elif grep -q "VERSION" debmacros; then
-            VERSION=$(grep "VERSION" debmacros | awk '{print $2}')
-        fi
-        
-        if [[ -n "${VERSION}" ]]; then
-            echo "Detected version: ${VERSION}"
-            
-            # Try to determine package name from debian/control or directory name
+    # Use upstream.yml (required) for fetching sources
+    if [[ -f "upstream.yml" ]]; then
+        echo "Found upstream.yml; using it for upstream source resolution..."
+        # Determine package name early
             PACKAGE=""
             if [[ -f "debian/control" ]]; then
-                PACKAGE=$(grep "^Source:" debian/control | awk '{print $2}')
+            PACKAGE=$(awk '/^Source:/{print $2; exit}' debian/control || true)
             fi
             if [[ -z "${PACKAGE}" ]]; then
-                # Fallback to directory name
                 PACKAGE=$(basename "$(pwd)")
             fi
-            echo "Detected package name: ${PACKAGE}"
-            
-            # Check if source is already prepared
-            if [[ -d "${PACKAGE}-${VERSION}" ]] && [[ -f "${PACKAGE}-${VERSION}/setup.py" ]]; then
-                echo "Source already prepared in ${PACKAGE}-${VERSION}/"
+        # Parse version and source template (support quoted or unquoted values)
+        VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
+        TEMPLATE="$(awk -F\" '/^source:[[:space:]]*\"/{print $2; exit} /^source:[[:space:]]*[^#]/{sub(/^source:[[:space:]]*/,""); gsub(/[[:space:]]+#.*/,""); print; exit}' upstream.yml || true)"
+        if [[ -z "${VERSION}" ]] || [[ -z "${TEMPLATE}" ]]; then
+            echo "Error: upstream.yml must define both version and source"
+                        return 1
+        fi
+        # Build final URL (support {version} and optional {name})
+        URL="${TEMPLATE//\{version\}/${VERSION}}"
+        if printf '%s' "${URL}" | grep -q '{name}'; then
+            URL="${URL//\{name\}/${PACKAGE}}"
+        fi
+        echo "Resolved source URL: ${URL}"
+        # Skip download if already prepared
+        if [[ -d "${PACKAGE}-${VERSION}" ]]; then
+            echo "Source directory ${PACKAGE}-${VERSION} already present; skipping download."
+        else
+            FILENAME="$(basename "${URL}")"
+            echo "Downloading ${FILENAME}..."
+            if curl -fsSL -o "${FILENAME}" "${URL}"; then
+                echo "Extracting ${FILENAME}..."
+                tar -xf "${FILENAME}"
+                # Detect top-level directory name from tar
+                TOPDIR="$(tar -tf "${FILENAME}" | head -1 | cut -d/ -f1)"
+                if [[ -n "${TOPDIR}" ]] && [[ -d "${TOPDIR}" ]]; then
+                    # Normalize nested layout like nginx-X/nginx-X/*
+                    if [[ -d "${TOPDIR}/${TOPDIR}" ]]; then
+                        mv "${TOPDIR}/${TOPDIR}"/* "${TOPDIR}/"
+                        rmdir "${TOPDIR}/${TOPDIR}" || true
+                    fi
+                    # If packaging is outside, copy it in
+                    if [[ -d "debian" ]] && [[ ! -d "${TOPDIR}/debian" ]]; then
+                        cp -r debian "${TOPDIR}/"
+                    fi
+                fi
             else
-                # Look for .orig.tar.gz file first
-                ORIG_TARBALL=$(find . -name "*.orig.tar.gz" | head -1)
-                if [[ -n "${ORIG_TARBALL}" ]]; then
-                    echo "Found source tarball: ${ORIG_TARBALL}"
-                    echo "Extracting source code..."
-                    tar -xzf "${ORIG_TARBALL}" || {
-                        echo "Failed to extract source tarball"
-                        return 1
-                    }
-                    echo "Source extracted successfully"
-                else
-                    # Try to download source from debian files
-                    echo "No .orig.tar.gz found, attempting to discover source URL..."
-                    
-                    # Discover source URL from debian files
-                    SOURCE_URL=""
-                    
-                    # Try to get source URL from debian/copyright
-                    if [[ -f "debian/copyright" ]]; then
-                        SOURCE_URL=$(grep "^Source:" debian/copyright | awk '{print $2}')
-                        if [[ -n "${SOURCE_URL}" ]]; then
-                            echo "Found source URL in debian/copyright: ${SOURCE_URL}"
-                        fi
-                    fi
-                    
-                    # If not found in copyright, try debian/control
-                    if [[ -z "${SOURCE_URL}" ]] && [[ -f "debian/control" ]]; then
-                        # Try Homepage field
-                        SOURCE_URL=$(grep "^Homepage:" debian/control | awk '{print $2}')
-                        if [[ -n "${SOURCE_URL}" ]]; then
-                            echo "Found source URL in debian/control Homepage: ${SOURCE_URL}"
-                        fi
-                    fi
-                    
-                    # If still not found, try Vcs-Git field
-                    if [[ -z "${SOURCE_URL}" ]] && [[ -f "debian/control" ]]; then
-                        VCS_GIT=$(grep "^Vcs-Git:" debian/control | awk '{print $2}')
-                        if [[ -n "${VCS_GIT}" ]]; then
-                            # Convert git URL to archive URL
-                            if [[ "${VCS_GIT}" =~ ^https://github.com/([^/]+)/([^/]+)\.git$ ]]; then
-                                SOURCE_URL="https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-                                echo "Converted Vcs-Git to source URL: ${SOURCE_URL}"
-                            fi
-                        fi
-                    fi
-                    
-                    # If we found a source URL, try to download from it
-                    if [[ -n "${SOURCE_URL}" ]]; then
-                        # Try different archive URL patterns
-                        ARCHIVE_URLS=(
-                            "${SOURCE_URL}/archive/v${VERSION}.tar.gz"
-                            "${SOURCE_URL}/archive/${VERSION}.tar.gz"
-                            "${SOURCE_URL}/archive/refs/tags/v${VERSION}.tar.gz"
-                            "${SOURCE_URL}/archive/refs/tags/${VERSION}.tar.gz"
-                        )
-                        
-                        SOURCE_DOWNLOADED=false
-                        for ARCHIVE_URL in "${ARCHIVE_URLS[@]}"; do
-                            echo "Trying to download from: ${ARCHIVE_URL}"
-                            if curl -fsSL -o "${PACKAGE}-${VERSION}.tar.gz" "${ARCHIVE_URL}"; then
-                                echo "Successfully downloaded source from ${ARCHIVE_URL}"
-                                SOURCE_DOWNLOADED=true
-                                break
-                            fi
-                        done
-                    else
-                        echo "Could not discover source URL from debian files"
-                        echo "Available files:"
-                        ls -la
-                        return 1
-                    fi
-                    
-                    if [[ "${SOURCE_DOWNLOADED}" == "true" ]]; then
-                        echo "Extracting downloaded source..."
-                        tar -xzf "${PACKAGE}-${VERSION}.tar.gz" || {
-                            echo "Failed to extract downloaded source"
-                            return 1
-                        }
-                        
-                        # Move extracted content to the expected directory structure
-                        if [[ -d "${PACKAGE}-${VERSION}" ]]; then
-                            # If the extracted directory has the same name, move its contents up
-                            if [[ -d "${PACKAGE}-${VERSION}/${PACKAGE}-${VERSION}" ]]; then
-                                mv "${PACKAGE}-${VERSION}/${PACKAGE}-${VERSION}"/* "${PACKAGE}-${VERSION}/"
-                                rmdir "${PACKAGE}-${VERSION}/${PACKAGE}-${VERSION}"
-                            fi
-                        fi
-                        
-                        echo "Source prepared successfully"
-                    else
-                        echo "Failed to download source from any URL pattern"
-                        echo "Available files:"
-                        ls -la
-                        return 1
-                    fi
-                fi
-                
-                # Apply common patches if source was downloaded/extracted
-                if [[ -f "${PACKAGE}-${VERSION}/setup.py" ]]; then
-                    echo "Applying common patches..."
-                    cd "${PACKAGE}-${VERSION}"
-                    
-                    # Apply patches based on package type
-                    if [[ "${PACKAGE}" == "lastversion" ]]; then
-                        # Fix requests dependency as done in RPM spec
-                        if grep -q '"requests>=2\.6\.1"' setup.py; then
-                            echo "Applying lastversion-specific patch..."
-                            perl -pi -e 's/"requests>=2\.6\.1"/"requests"/' setup.py
-                        fi
-                    fi
-                    
-                    # Copy debian directory if it exists in parent
-                    if [[ -d "../debian" ]]; then
-                        echo "Copying debian packaging files..."
-                        cp -r ../debian .
-                    fi
-                    
-                    cd ..
-                fi
+                echo "Error: failed to download ${URL}"
+                return 1
             fi
         fi
+    else
+        echo "Error: upstream.yml not found. This builder requires upstream.yml with 'version' and 'source'."
+        return 1
     fi
     
     # After setup.sh, we need to find where the source code and debian directory are
@@ -328,22 +229,9 @@ build_package() {
         fi
     fi
 
-    # Check for version macros and update changelog (support debmacros and rpmmacros)
-    VERSION=""
-    if [[ -f "rpmmacros" ]]; then
-        echo "Reading version from rpmmacros..."
-        if grep -q "%nginx_version" rpmmacros; then
-            VERSION=$(grep "%nginx_version" rpmmacros | awk '{print $2}')
-        fi
-    elif [[ -f "debmacros" ]]; then
-        echo "Reading version from debmacros..."
-        if grep -q "%lastversion_version" debmacros; then
-            VERSION=$(grep "%lastversion_version" debmacros | awk '{print $2}')
-        elif grep -q "%version" debmacros; then
-            VERSION=$(grep "%version" debmacros | awk '{print $2}')
-        elif grep -q "VERSION" debmacros; then
-            VERSION=$(grep "VERSION" debmacros | awk '{print $2}')
-        fi
+    # Check for version and update changelog (read only from upstream.yml)
+    if [[ -z "${VERSION}" ]] && [[ -f "upstream.yml" ]]; then
+        VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
     fi
 
     if [[ -n "${VERSION}" ]]; then
