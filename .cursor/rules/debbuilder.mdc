@@ -81,3 +81,10 @@ version: 1.1.0
 - Upstream sources
   - `upstream.yml` is the only source of truth for upstream version and tarball URL template.
   - No use of `debian/watch`, `uscan`, `debmacros` or `Homepage`/`Vcs-*` fallbacks during fetch.
+
+- Local testing on Apple Silicon (Darwin arm64)
+  - Prefer native arm64 execution for performance. Do not force `--platform linux/amd64`.
+  - Example:
+    - Good: `docker run --rm -v $PWD:/sources getpagespeed/debbuilder:ubuntu22.04 build`
+    - Also acceptable: `docker run --rm --platform linux/arm64 ...`
+  - Images are multi-arch; Docker will pull/run the arm64 variant on Apple Silicon by default.
