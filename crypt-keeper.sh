@@ -76,13 +76,6 @@ function docker-image-name() {
     echo -n "${DOCKER_REGISTRY_USER}/debbuilder:${DISTRO/\//-}-${VERSION}"
 }
 
-function docker-image-alt-name() {
-    DISTRO=${1}
-    VERSION=${2}
-    DIST=${DISTRO_DISTS[$DISTRO]}
-    echo -n "${DOCKER_REGISTRY_USER}/debbuilder:${DIST}${VERSION}"
-}
-
 function docker-image-dist-tag() {
     DISTRO=${1}
     VERSION=${2}
@@ -125,21 +118,19 @@ function build() {
     DISTRO=${1}
     VERSION=${2}
     MAIN_TAG="$(docker-image-name "${DISTRO}" "${VERSION}")"
-    ALT_TAG="$(docker-image-alt-name "${DISTRO}" "${VERSION}")"
     DIST_TAG="$(docker-image-dist-tag "${DISTRO}" "${VERSION}")"
 
     # Ensure buildx is set up and ready for multi-architecture builds
     docker buildx create --use --name multiarch-builder --driver docker-container || true
 
     echo "Building multi-architecture image for ${DISTRO}-${VERSION}"
-    echo "Tags: ${MAIN_TAG}, ${ALT_TAG}, ${DIST_TAG}"
+    echo "Tags: ${MAIN_TAG}, ${DIST_TAG}"
     echo "Platforms: linux/amd64, linux/arm64"
 
     cd "${DISTRO}/${VERSION}" && docker buildx build \
         --platform linux/amd64,linux/arm64 \
         --push \
         -t "${MAIN_TAG}" \
-        -t "${ALT_TAG}" \
         -t "${DIST_TAG}" \
         .
     cd -
@@ -171,7 +162,7 @@ function test() {
 }
 
 case "$1" in
-    generate|build|push|test|docker-image-name|docker-image-alt-name|docker-image-dist-tag)
+    generate|build|push|test|docker-image-name|docker-image-dist-tag)
         if [ "$2" == "all" ]; then
             map-all "$1"
         else
