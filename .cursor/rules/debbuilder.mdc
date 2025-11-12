@@ -45,13 +45,12 @@ version: 1.1.0
   - Multi-package detection: if the repo contains multiple `debian/` trees (e.g., `nginx-<ver>`), build each once.
 
 - Container images and layout
-  - Images are per-distro/dist (versioned dist), not per codename: tags are based on matrix-driven values.
+  - Images are tagged per distro codename (canonical) with numeric aliases.
   - Tag policy:
-    - Ubuntu: dotted numeric tags are primary, e.g., `getpagespeed/debbuilder:ubuntu20.04`, `ubuntu22.04`, `ubuntu24.04`
-    - Debian: numeric tags, e.g., `getpagespeed/debbuilder:debian12`, `debian13`
-    - Aliases are also pushed:
-      - Hyphen-codename alias, e.g., `getpagespeed/debbuilder:ubuntu-jammy`, `debian-bookworm`
-      - Legacy codename alias without hyphen, e.g., `getpagespeed/debbuilder:ubuntujammy` (kept for backward compatibility)
+    - Canonical tags (preferred): hyphen-codename, e.g., `getpagespeed/debbuilder:ubuntu-jammy`, `debian-bookworm`
+    - Numeric aliases:
+      - Ubuntu dotted, e.g., `getpagespeed/debbuilder:ubuntu20.04`, `ubuntu22.04`, `ubuntu24.04`
+      - Debian numeric, e.g., `getpagespeed/debbuilder:debian12`, `debian13`
   - Expected mounts: `-v $PWD:/sources`, `-v $PWD/output:/output`.
   - Non-interactive apt; lintian and devscripts are available in images.
 
@@ -76,7 +75,7 @@ version: 1.1.0
   - `builder-scripts/incoming-deb.sh` expects `<project>/<distro>/<dist>/<arch>/<branch>/`
     and runs `reprepro -b . includedeb "${DIST}" *.deb`.
   - `buildstrap-deb/generate_reprepro_distributions.py` generates `conf/distributions` suites
-    using versioned dists (e.g., `ubuntu20.04`, `debian12`) and optional `-mainline` suites.
+    using codenames as canonical suites (e.g., `jammy`, `bookworm`) and optional `-mainline` suites.
 
 - Upstream sources
   - `upstream.yml` is the only source of truth for upstream version and tarball URL template.
