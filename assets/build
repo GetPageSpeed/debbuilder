@@ -189,7 +189,7 @@ build_package() {
         echo "Error: upstream.yml not found. This builder requires upstream.yml with 'version' and 'source'."
         return 1
     fi
-    
+
     # After fetching sources, ensure we are inside the actual source directory containing debian/
     # If we are still at the original root (no debian/ here), try to locate and enter it
     if [[ -d "debian" ]]; then
@@ -217,7 +217,7 @@ build_package() {
             fi
         fi
     fi
-    
+
     # Check if we need to find the source code in a subdirectory
     # This handles cases where the debian directory is in the parent but source is in a subdirectory
     if [[ ! -f "setup.py" ]] && [[ ! -f "pyproject.toml" ]] && [[ ! -f "Makefile" ]]; then
@@ -239,37 +239,108 @@ build_package() {
         VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
     fi
 
-    if [[ -n "${VERSION}" ]]; then
-        echo "Updating version references with version ${VERSION} and distribution ${DISTRO}..."
-        # Update changelog if it exists
-        if [[ -f "debian/changelog" ]]; then
-            sed -i "s/VERSION/${VERSION}/g" debian/changelog
-            sed -i "s/DISTRO/${DISTRO}/g" debian/changelog || true
-            echo "Updated debian/changelog"
+    if [[ -z "${VERSION}" ]]; then
+        echo "Warning: No version found in upstream.yml; using existing changelog version."
+    fi
+
+    # Determine suite codename and compute Debian REVISION from /etc/os-release only
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        SUITE_CODENAME="${VERSION_CODENAME:-}"
+        OS_ID="${ID:-}"
+        OS_VERSION_ID="${VERSION_ID:-}"
+        if [[ -z "${SUITE_CODENAME}" || -z "${OS_ID}" || -z "${OS_VERSION_ID}" ]]; then
+            echo "Error: Missing fields in /etc/os-release (need VERSION_CODENAME, ID, VERSION_ID)."
+            return 1
         fi
-        # Update any other files that might contain version references
-        for file in debian/*; do
-            if [[ -f "$file" ]]; then
-                if grep -q "VERSION" "$file"; then
-                    sed -i "s/VERSION/${VERSION}/g" "$file"
-                    echo "Updated version references in $file"
-                fi
-                if grep -q "DISTRO" "$file"; then
-                    sed -i "s/DISTRO/${DISTRO}/g" "$file"
-                    echo "Updated distribution references in $file"
-                fi
-            fi
-        done
-        for file in *.py *.txt *.md *.rst; do
-            if [[ -f "$file" ]]; then
-                if grep -q "VERSION" "$file"; then
-                    sed -i "s/VERSION/${VERSION}/g" "$file"
-                    echo "Updated version references in $file"
-                fi
-            fi
-        done
     else
-        echo "Warning: No version found in rpmmacros/debmacros; using existing changelog version."
+        echo "Error: /etc/os-release not found; cannot determine suite and distro token."
+        return 1
+    fi
+
+    # Compute distro token
+    # - Debian: deb${VERSION_ID} (e.g., deb12)
+    # - Ubuntu: ubuntu${VERSION_ID//./} (e.g., ubuntu2204)
+    DISTRO_TOKEN=""
+    if [[ "${OS_ID}" == "debian" ]]; then
+        DISTRO_TOKEN="deb${OS_VERSION_ID}"
+    elif [[ "${OS_ID}" == "ubuntu" ]]; then
+        DISTRO_TOKEN="ubuntu${OS_VERSION_ID//./}"
+    else
+        echo "Error: Unsupported OS_ID '${OS_ID}'. Only debian/ubuntu are supported."
+        return 1
+    fi
+
+    # Determine flavor based on branch env (GIT_BRANCH preferred)
+    RAW_BRANCH="${GIT_BRANCH:-${CIRCLE_BRANCH:-${BRANCH:-}}}"
+    if [[ "${RAW_BRANCH}" == "main" ]]; then
+        FLAVOR="stable"
+    elif [[ "${RAW_BRANCH}" == "master" ]]; then
+        FLAVOR="stable"
+    else
+        FLAVOR="${RAW_BRANCH}"
+    fi
+
+    # Compose Debian revision (no epoch added; template controls epoch)
+    # Example: 1~gps1+deb12+mainline
+    REVISION="1~gps1+${DISTRO_TOKEN}+${FLAVOR}"
+
+    # Stamp debian/changelog:
+    # - If changelog missing: create minimal templated changelog with placeholders, then stamp
+    # - If placeholders present: replace VERSION, REVISION, SUITE_CODENAME
+    # - Else: fallback to appending ~${SUITE_CODENAME} and set Distribution
+    if [[ ! -f "debian/changelog" ]]; then
+        echo "debian/changelog not found; generating minimal templated changelog."
+        PACKAGE_NAME="$(dpkg-parsechangelog --show-field Source 2>/dev/null || true)"
+        if [[ -z "${PACKAGE_NAME}" && -f "debian/control" ]]; then
+            PACKAGE_NAME="$(awk '/^Source:/{print $2; exit}' debian/control || true)"
+        fi
+        if [[ -z "${PACKAGE_NAME}" ]]; then
+            PACKAGE_NAME="$(basename "$(pwd)")"
+        fi
+        {
+            echo "${PACKAGE_NAME} (VERSION-REVISION) SUITE_CODENAME; urgency=medium"
+            echo
+            echo "  * Automated build."
+            echo
+            echo " -- GetPageSpeed LLC <builder@getpagespeed.com>  $(date -R)"
+        } > debian/changelog
+    fi
+
+    STAMPED=false
+    if grep -qE 'VERSION|REVISION|SUITE_CODENAME' debian/changelog; then
+        [[ -n "${VERSION}" ]] && sed -i "s/VERSION/${VERSION}/g" debian/changelog
+        sed -i "s/REVISION/${REVISION}/g" debian/changelog
+        sed -i "s/SUITE_CODENAME/${SUITE_CODENAME}/g" debian/changelog
+        echo "Stamped debian/changelog with VERSION=${VERSION}, REVISION=${REVISION}, SUITE_CODENAME=${SUITE_CODENAME}"
+        STAMPED=true
+    fi
+
+    if [[ "${STAMPED}" != true ]]; then
+        # Fallback path: per-suite suffixing and distribution set, without altering base version semantics
+        current_version="$(dpkg-parsechangelog --show-field Version || true)"
+        if [[ -n "${current_version}" ]]; then
+            if [[ "${current_version}" == *"~${SUITE_CODENAME}"* ]]; then
+                echo "Changelog already contains per-suite suffix ~${SUITE_CODENAME}"
+                if command -v dch >/dev/null 2>&1; then
+                    dch -D "${SUITE_CODENAME}" --force-distribution --no-auto-nmu -m "CI: set distribution to ${SUITE_CODENAME}" || true
+                else
+                    sed -i -E "1s/^(\S+ \()[^)]*(\) )(\S+)(; urgency=)/\1${current_version}\2${SUITE_CODENAME}\4/" debian/changelog || true
+                fi
+            else
+                new_version="${current_version}~${SUITE_CODENAME}"
+                echo "Updating changelog version: ${current_version} -> ${new_version} (distribution ${SUITE_CODENAME})"
+                if command -v dch >/dev/null 2>&1; then
+                    dch -v "${new_version}" --force-bad-version -D "${SUITE_CODENAME}" --force-distribution --no-auto-nmu -m "CI: per-suite suffix ~${SUITE_CODENAME}"
+                else
+                    sed -i -E "1s/^(\S+ \()([^)]*)(\) )/\1${new_version}\3/" debian/changelog
+                    sed -i -E "1s/^(\S+ \([^)]*\) )(\S+)(; urgency=)/\1${SUITE_CODENAME}\3/" debian/changelog
+                fi
+            fi
+        else
+            echo "Warning: could not parse current changelog version; leaving changelog unmodified."
+        fi
     fi
 
     # Clean up old build artifacts
@@ -291,7 +362,7 @@ build_package() {
             echo "Successfully updated package lists with --allow-unauthenticated"
         else
             echo "Failed with --allow-unauthenticated, trying to fix GPG keys..."
-            
+
             # Method 2: Try to refresh GPG keys
             if command -v apt-key &>/dev/null; then
                 echo "Refreshing GPG keys..."
@@ -299,14 +370,14 @@ build_package() {
                 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 0E98404D386FA1D9 || true
                 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517 || true
             fi
-            
+
             # Method 3: Try updating with trusted repositories
             if ! apt-get update --allow-unauthenticated; then
                 echo "Attempting to configure trusted repositories..."
-                
+
                 # Backup current sources
                 cp /etc/apt/sources.list /etc/apt/sources.list.backup 2>/dev/null || true
-                
+
                 # Try to detect the distribution dynamically
                 if [[ -f /etc/os-release ]]; then
                     source /etc/os-release
@@ -330,14 +401,14 @@ build_package() {
                     echo "Neither /etc/os-release nor /etc/debian_version found."
                     return 1
                 fi
-                
+
                 # Create a minimal trusted sources.list
                 cat > /etc/apt/sources.list << EOF
 deb [trusted=yes] http://deb.debian.org/debian $DISTRO_NAME main
 deb [trusted=yes] http://deb.debian.org/debian $DISTRO_NAME-updates main
 deb [trusted=yes] http://deb.debian.org/debian-security $DISTRO_NAME-security main
 EOF
-                
+
                 # Try updating with the new configuration
                 if ! apt-get update --allow-unauthenticated; then
                     echo "Error: Failed to update package lists even after reconfiguring repositories"
@@ -348,14 +419,14 @@ EOF
             fi
         fi
     fi
-    
+
     # Pre-configure timezone to avoid tzdata interactive prompts
     echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
     echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
     # Also set the timezone directly
     ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
     echo "Etc/UTC" > /etc/timezone
-    
+
     # Check for missing dependencies first
     if [[ -f "/usr/bin/check-deps.sh" ]]; then
         echo "Checking build dependencies..."
@@ -365,7 +436,7 @@ EOF
             echo "Dependency check failed. Attempting to install anyway..."
         }
     fi
-    
+
     # Preferred: install Build-Depends from local debian/control via mk-build-deps
     if [[ -f "debian/control" ]]; then
         echo "Attempting to install Build-Depends via mk-build-deps..."
@@ -410,7 +481,7 @@ EOF
     mv ../*.ddeb "${OUTPUT}/" 2>/dev/null || true
     mv ../*.buildinfo "${OUTPUT}/"
     mv ../*.changes "${OUTPUT}/"
-    
+
     # Rename packages to include distribution if DISTRO is set
     if [[ -n "${DISTRO}" ]]; then
         cd "${OUTPUT}"
@@ -428,7 +499,7 @@ EOF
             fi
         done
     fi
-    
+
     echo "Package built successfully for ${source_dir}."
 }
 
