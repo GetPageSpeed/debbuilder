@@ -38,7 +38,13 @@ if [[ "${ID}" == "ubuntu" ]]; then
     add-apt-repository -y multiverse || true
     # Enable backports on focal to satisfy newer build-deps like debhelper-compat (= 13)
     if [[ "${VERSION_CODENAME}" == "focal" ]]; then
-        add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu focal-backports main universe multiverse"
+        ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+        UBUNTU_MIRROR="http://archive.ubuntu.com/ubuntu"
+        # For non-amd64 architectures (e.g., arm64), use ports.ubuntu.com
+        if [[ "${ARCH}" != "amd64" && "${ARCH}" != "i386" ]]; then
+            UBUNTU_MIRROR="http://ports.ubuntu.com/ubuntu-ports"
+        fi
+        add-apt-repository -y "deb ${UBUNTU_MIRROR} focal-backports main universe multiverse"
     fi
 fi
 
