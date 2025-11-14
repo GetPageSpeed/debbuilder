@@ -141,22 +141,22 @@ build_package() {
                 PACKAGE=$(basename "$(pwd)")
             fi
         # Parse version and source template (support quoted or unquoted values)
-        VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
+        UPSTREAM_VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
         TEMPLATE="$(awk -F\" '/^source:[[:space:]]*\"/{print $2; exit} /^source:[[:space:]]*[^#]/{sub(/^source:[[:space:]]*/,""); gsub(/[[:space:]]+#.*/,""); print; exit}' upstream.yml || true)"
-        if [[ -z "${VERSION}" ]] || [[ -z "${TEMPLATE}" ]]; then
+        if [[ -z "${UPSTREAM_VERSION}" ]] || [[ -z "${TEMPLATE}" ]]; then
             echo "Error: upstream.yml must define both version and source"
                         return 1
         fi
         # Build final URL (support {version} and optional {name})
-        URL="${TEMPLATE//\{version\}/${VERSION}}"
+        URL="${TEMPLATE//\{version\}/${UPSTREAM_VERSION}}"
         if printf '%s' "${URL}" | grep -q '{name}'; then
             URL="${URL//\{name\}/${PACKAGE}}"
         fi
         echo "Resolved source URL: ${URL}"
         # Skip download if already prepared
-        if [[ -d "${PACKAGE}-${VERSION}" ]]; then
+        if [[ -d "${PACKAGE}-${UPSTREAM_VERSION}" ]]; then
             echo "Source directory ${PACKAGE}-${VERSION} already present; skipping download."
-            cd "${PACKAGE}-${VERSION}"
+            cd "${PACKAGE}-${UPSTREAM_VERSION}"
         else
             FILENAME="$(basename "${URL}")"
             echo "Downloading ${FILENAME}..."
@@ -234,13 +234,13 @@ build_package() {
         fi
     fi
 
-    # Check for version and update changelog (read only from upstream.yml)
-    if [[ -z "${VERSION}" ]] && [[ -f "upstream.yml" ]]; then
-        VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
+    # Check for upstream version if not set (read only from upstream.yml)
+    if [[ -z "${UPSTREAM_VERSION}" ]] && [[ -f "upstream.yml" ]]; then
+        UPSTREAM_VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
     fi
 
-    if [[ -z "${VERSION}" ]]; then
-        echo "Warning: No version found in upstream.yml; using existing changelog version."
+    if [[ -z "${UPSTREAM_VERSION}" ]]; then
+        echo "Warning: No upstream version found; using existing changelog version."
     fi
 
     # Determine suite codename and compute Debian REVISION from /etc/os-release only
@@ -310,10 +310,10 @@ build_package() {
 
     STAMPED=false
     if grep -qE 'VERSION|REVISION|SUITE_CODENAME' debian/changelog; then
-        [[ -n "${VERSION}" ]] && sed -i "s/VERSION/${VERSION}/g" debian/changelog
+        [[ -n "${UPSTREAM_VERSION}" ]] && sed -i "s/VERSION/${UPSTREAM_VERSION}/g" debian/changelog
         sed -i "s/REVISION/${REVISION}/g" debian/changelog
         sed -i "s/SUITE_CODENAME/${SUITE_CODENAME}/g" debian/changelog
-        echo "Stamped debian/changelog with VERSION=${VERSION}, REVISION=${REVISION}, SUITE_CODENAME=${SUITE_CODENAME}"
+        echo "Stamped debian/changelog with VERSION=${UPSTREAM_VERSION}, REVISION=${REVISION}, SUITE_CODENAME=${SUITE_CODENAME}"
         STAMPED=true
     fi
 
