@@ -36,6 +36,10 @@ if [[ "${ID}" == "ubuntu" ]]; then
     ${PKGR} -y install software-properties-common || true
     add-apt-repository -y universe || true
     add-apt-repository -y multiverse || true
+    # Enable backports on focal to satisfy newer build-deps like debhelper-compat (= 13)
+    if [[ "${VERSION_CODENAME}" == "focal" ]]; then
+        add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu focal-backports main universe multiverse"
+    fi
 fi
 
 # Install primary packages (e.g., for GetPageSpeed repo)
