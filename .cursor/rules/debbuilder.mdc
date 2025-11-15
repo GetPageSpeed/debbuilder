@@ -35,6 +35,11 @@ version: 1.1.0
   - Do not edit the generated per-suite scripts. Make changes to `assets/build` and regenerate.
   - If quick testing is needed without regeneration, use the runtime override `/.debbuilder/build` from the mounted source repo.
 
+- Version stamping
+  - `REVISION` is computed as a dist/flavor suffix only (no release), e.g., `gps1+deb12+stable`.
+  - Packaging templates should set the release in `debian/changelog` as `1:VERSION-<release>~REVISION` (e.g., `-1~REVISION`).
+  - The builder stamps placeholders `VERSION`, `REVISION`, and `SUITE_CODENAME` in `debian/changelog` when present.
+
 - Dependency handling
   - Non-fatal preflight: run `check-deps.sh` to warn on missing build deps (parsed from `debian/control`).
   - Install build deps using: `mk-build-deps` → `apt-get build-dep` → manual parse fallback.
