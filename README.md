@@ -1,5 +1,7 @@
 # DEB builder Docker images
 
+Images are generated from `distro_versions.json` and the scripts in `assets/`. Mount your package projects at `/sources` and an output directory at `/output`. The builder finds each project's `debian/` directory, installs its build dependencies, builds the packages, and writes the resulting artifacts to `/output`.
+
 This project provides Docker images for building Debian packages (.deb files) across different Ubuntu distributions. It's designed to be simple to use - just mount a directory containing a `debian` folder and get built .deb files as output.
 
 ## Features
