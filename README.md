@@ -2,6 +2,8 @@ https://chatgpt.com/c/66eeef52-90fc-8011-8554-a025ed2c2438
 
 # DEB builder Docker images
 
+> End‑to‑end flow documentation: `builder-scripts/docs/system-overview.md`
+
 This project provides Docker images for building Debian packages (.deb files) across different Ubuntu distributions. It's designed to be simple to use - just mount a directory containing a `debian` folder and get built .deb files as output.
 
 ## Features
