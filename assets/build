@@ -282,9 +282,9 @@ build_package() {
         FLAVOR="${RAW_BRANCH}"
     fi
 
-    # Compose Debian revision (no epoch added; template controls epoch)
-    # Example: 1~gps1+deb12+mainline
-    REVISION="1~gps1+${DISTRO_TOKEN}+${FLAVOR}"
+    # Compose Debian revision suffix (no release here; template controls -<release>~)
+    # Example: gps1+deb12+mainline
+    REVISION="gps1+${DISTRO_TOKEN}+${FLAVOR}"
 
     # Stamp debian/changelog:
     # - If changelog missing: create minimal templated changelog with placeholders, then stamp
@@ -300,7 +300,7 @@ build_package() {
             PACKAGE_NAME="$(basename "$(pwd)")"
         fi
         {
-            echo "${PACKAGE_NAME} (VERSION-REVISION) SUITE_CODENAME; urgency=medium"
+            echo "${PACKAGE_NAME} (VERSION-1~REVISION) SUITE_CODENAME; urgency=medium"
             echo
             echo "  * Automated build."
             echo
