@@ -44,6 +44,7 @@ version: 1.1.0
   - Non-fatal preflight: run `check-deps.sh` to warn on missing build deps (parsed from `debian/control`).
   - Install build deps using: `mk-build-deps` → `apt-get build-dep` → manual parse fallback.
   - Always ensure base essentials like `pkg-config`, `libpcre2-dev`, `zlib1g-dev`, `libssl-dev` are present for nginx builds.
+  - Ubuntu focal (20.04): before resolving deps, rewrite `debhelper-compat (= 13)` to `debhelper-compat (= 12)` (and `debian/compat` 13→12 when present). This avoids requiring backports and keeps builds green on focal.
 
 - Idempotency and performance
   - A `.debbuilder_built` sentinel prevents duplicate builds within a single container run. Remove or use `--force` to rebuild.
