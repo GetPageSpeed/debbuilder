@@ -356,7 +356,27 @@ build_package() {
     if [[ -f "debian/rules" ]]; then
         make -f debian/rules clean || dh clean || true
     fi
-
+    
+    # Ubuntu focal: downgrade debhelper compat level to 12 before resolving deps
+    if [[ "${OS_ID}" == "ubuntu" && "${SUITE_CODENAME}" == "focal" ]]; then
+        if [[ -f "debian/control" ]]; then
+            if grep -qE 'debhelper-compat[[:space:]]*\(= *13\)' debian/control; then
+                echo "Focal detected: rewriting debhelper-compat (= 13) -> (= 12) in debian/control"
+                sed -i -E 's/debhelper-compat[[:space:]]*\(= *13\)/debhelper-compat (= 12)/g' debian/control
+            fi
+            if grep -qE 'debhelper[[:space:]]*\(>= *13' debian/control; then
+                echo "Focal detected: rewriting debhelper (>= 13) -> (>= 12) in debian/control"
+                sed -i -E 's/debhelper[[:space:]]*\(>= *13/debhelper (>= 12/g' debian/control
+            fi
+        fi
+        if [[ -f "debian/compat" ]]; then
+            if grep -q '^13$' debian/compat; then
+                echo "Focal detected: rewriting debian/compat 13 -> 12"
+                echo "12" > debian/compat
+            fi
+        fi
+    fi
+ 
     # Install build dependencies from the current directory (which should have debian/control)
     echo "Installing build dependencies from $(pwd)..."
 
