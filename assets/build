@@ -317,6 +317,15 @@ build_package() {
         STAMPED=true
     fi
 
+    # If debian/control uses VERSION as a placeholder anywhere
+    # (e.g. Provides: nginx-rVERSION, Depends: foo-VERSION, etc.),
+    # stamp it to the resolved upstream version so this logic is
+    # reusable beyond nginx-specific packages.
+    if [[ -n "${UPSTREAM_VERSION}" ]] && [[ -f "debian/control" ]] && grep -q "VERSION" debian/control; then
+        sed -i "s/VERSION/${UPSTREAM_VERSION}/g" debian/control
+        echo "Stamped debian/control with VERSION=${UPSTREAM_VERSION}"
+    fi
+
     if [[ "${STAMPED}" != true ]]; then
         # Fallback path: per-suite suffixing and distribution set, without altering base version semantics
         current_version="$(dpkg-parsechangelog --show-field Version || true)"
