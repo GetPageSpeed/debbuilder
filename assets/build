@@ -185,6 +185,35 @@ build_package() {
                 return 1
             fi
         fi
+        # If module metadata exists, fetch external module source here (not in rules)
+        if [[ -f "../version.yml" ]] && [[ ! -f "version.yml" ]]; then
+            cp -f ../version.yml . || true
+        fi
+        if [[ -f "version.yml" ]]; then
+            echo "Found version.yml; fetching external module source..."
+            # shellcheck disable=SC2015
+            REPO="$(awk -F'\"' '/^repo:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${REPO}" ]] && REPO="$(awk -F': *' '/^repo:[[:space:]]*[^#]/{sub(/^repo:[[:space:]]*/,""); print; exit}' version.yml || true)"
+            TAG="$(awk -F'\"' '/^tag:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${TAG}" ]] && TAG="$(awk -F': *' '/^tag:[[:space:]]*[^#]/{sub(/^tag:[[:space:]]*/,""); print; exit}' version.yml || true)"
+            NAME="$(awk -F'\"' '/^upstream_name:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${NAME}" ]] && NAME="$(awk -F': *' '/^upstream_name:[[:space:]]*[^#]/{sub(/^upstream_name:[[:space:]]*/,""); print; exit}' version.yml || true)"
+            if [[ -n "${REPO}" ]] && [[ -n "${TAG}" ]]; then
+                [[ -z "${NAME}" ]] && NAME="$(basename "${REPO}")"
+                URL_MODULE="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+                echo "Downloading module from ${URL_MODULE}"
+                if curl -fsSL -o module.tgz "${URL_MODULE}"; then
+                    tar -xzf module.tgz
+                    rm -f module.tgz || true
+                    TAG_NOPREFIX="${TAG#v}"
+                    if [[ -d "${NAME}-${TAG}" ]] && [[ "${TAG}" != "${TAG_NOPREFIX}" ]] && [[ ! -d "${NAME}-${TAG_NOPREFIX}" ]]; then
+                        mv "${NAME}-${TAG}" "${NAME}-${TAG_NOPREFIX}"
+                    fi
+                else
+                    echo "Error: failed to download module from ${URL_MODULE}"
+                    return 1
+                fi
+            else
+                echo "version.yml present but repo/tag missing; skipping external module fetch."
+            fi
+        fi
     else
         echo "Error: upstream.yml not found. This builder requires upstream.yml with 'version' and 'source'."
         return 1
