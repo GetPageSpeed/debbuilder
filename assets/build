@@ -91,26 +91,83 @@ find_packages() {
     find "${SOURCES}" -mindepth 1 -type d -name debian -exec dirname {} \;
 }
 
-# Function to check if the package can be skipped
+# Function to check if the package (name + version) already exists in the APT repo.
+# We cannot rely on debian/changelog here because it may still contain placeholders
+# (VERSION, REVISION, SUITE_CODENAME) and dpkg-parsechangelog will fail. Instead we
+# derive the expected version from upstream.yml and the current distro/branch, using
+# the same scheme as the stamping logic in build_package.
 check_packages_in_repo() {
     local source_dir=$1
     cd "$source_dir"
-    if [[ -f "debian/control" ]]; then
-        # Parse the package name and version
-        package_name=$(dpkg-parsechangelog --show-field Source)
-        package_version=$(dpkg-parsechangelog --show-field Version)
 
-        # Check if package already exists in repository
+    if [[ ! -f "debian/control" ]]; then
+        echo "No debian/control in ${source_dir}; cannot check repo, will build."
+        return 1
+    fi
+
+    if [[ ! -f "upstream.yml" ]]; then
+        echo "No upstream.yml in ${source_dir}; cannot derive expected version, will build."
+        return 1
+    fi
+
+    # Derive package name from debian/control or fall back to directory name
+    local package_name
+    package_name="$(awk '/^Source:/{print $2; exit}' debian/control || true)"
+    if [[ -z "${package_name}" ]]; then
+        package_name="$(basename "$(pwd)")"
+    fi
+
+    # Parse upstream version from upstream.yml (supports quoted or bare numeric)
+    local upstream_version
+    upstream_version="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
+    if [[ -z "${upstream_version}" ]]; then
+        echo "Unable to determine upstream version for ${package_name}; will build."
+        return 1
+    fi
+
+    # Determine distro and branch to compute the same REVISION we stamp later.
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        local os_id="${ID:-}"
+        local os_version_id="${VERSION_ID:-}"
+        if [[ -z "${os_id}" || -z "${os_version_id}" ]]; then
+            echo "Missing OS metadata; cannot compute Debian revision. Will build."
+            return 1
+        fi
+        local distro_token
+        if [[ "${os_id}" == "debian" ]]; then
+            distro_token="deb${os_version_id}"
+        elif [[ "${os_id}" == "ubuntu" ]]; then
+            distro_token="ubuntu${os_version_id//./}"
+        else
+            echo "Unsupported OS_ID '${os_id}'; will build."
+            return 1
+        fi
+
+        local raw_branch="${GIT_BRANCH:-${CIRCLE_BRANCH:-${BRANCH:-}}}"
+        local flavor
+        if [[ "${raw_branch}" == "main" || "${raw_branch}" == "master" || -z "${raw_branch}" ]]; then
+            # match build_package: main/master (or no branch) -> "stable"
+            flavor="stable"
+        else
+            flavor="${raw_branch}"
+        fi
+
+        local revision="gps1+${distro_token}+${flavor}"
+        local package_version="${upstream_version}-1~${revision}"
+
+        # Check if this exact version already exists in the configured APT repo
         if apt-cache show "${package_name}=${package_version}" &>/dev/null; then
-            echo "Package ${package_name} version ${package_version} already exists. Skipping build."
+            echo "Package ${package_name} version ${package_version} already exists in APT repo. Skipping build."
             return 0
         else
-            echo "Package ${package_name} version ${package_version} is missing. Building it."
+            echo "Package ${package_name} version ${package_version} is missing in APT repo. Building it."
             return 1
         fi
     else
-        echo "No debian/control file found in ${source_dir}. Skipping build."
-        return 0
+        echo "/etc/os-release not found; cannot determine distro for version suffix. Will build."
+        return 1
     fi
 }
 
