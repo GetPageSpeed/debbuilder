@@ -307,22 +307,6 @@ build_package() {
         fi
     fi
 
-    # Check if we need to find the source code in a subdirectory
-    # This handles cases where the debian directory is in the parent but source is in a subdirectory
-    if [[ ! -f "setup.py" ]] && [[ ! -f "pyproject.toml" ]] && [[ ! -f "Makefile" ]]; then
-        echo "No build files found in current directory, looking for source in subdirectories..."
-        SOURCE_DIR=$(find . -name "setup.py" -o -name "pyproject.toml" -o -name "Makefile" | head -1 | xargs dirname)
-        if [[ -n "${SOURCE_DIR}" ]]; then
-            echo "Found source directory: ${SOURCE_DIR}"
-            cd "${SOURCE_DIR}"
-            echo "Changed to source directory: $(pwd)"
-        else
-            echo "No source files found in subdirectories"
-            echo "Available files:"
-            find . -type f -name "setup.py" -o -name "pyproject.toml" -o -name "Makefile" 2>/dev/null || echo "No build files found"
-        fi
-    fi
-
     # Check for upstream version if not set (read only from upstream.yml)
     if [[ -z "${UPSTREAM_VERSION}" ]] && [[ -f "upstream.yml" ]]; then
         UPSTREAM_VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
