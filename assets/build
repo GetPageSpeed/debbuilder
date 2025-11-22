@@ -3,6 +3,9 @@
 # use exit codes of failing commands
 set -exo pipefail
 
+ # Ensure dpkg-deb always emits gzip-compressed control data to satisfy older reprepro
+export DPKG_DEB="dpkg-deb -Zxz -z9 --uniform-compression"
+
 # Set non-interactive frontend to avoid prompts during package installation
 export DEBIAN_FRONTEND=noninteractive
 
@@ -442,7 +445,7 @@ build_package() {
     if [[ -f "debian/rules" ]]; then
         make -f debian/rules clean || dh clean || true
     fi
-    
+
     # Ubuntu focal: downgrade debhelper compat level to 12 before resolving deps
     if [[ "${OS_ID}" == "ubuntu" && "${SUITE_CODENAME}" == "focal" ]]; then
         if [[ -f "debian/control" ]]; then
@@ -462,7 +465,7 @@ build_package() {
             fi
         fi
     fi
- 
+
     # Install build dependencies from the current directory (which should have debian/control)
     echo "Installing build dependencies from $(pwd)..."
 

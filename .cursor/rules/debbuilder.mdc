@@ -82,6 +82,9 @@ version: 1.1.0
     and runs `reprepro -b . includedeb "${DIST}" *.deb`.
   - `buildstrap-deb/generate_reprepro_distributions.py` generates `conf/distributions` suites
     using codenames as canonical suites (e.g., `jammy`, `bookworm`) and optional `-mainline` suites.
+- Compression policy
+  - `assets/build` exports `DPKG_DEB="dpkg-deb -Zxz -z9 --uniform-compression"` so every package’s `control.tar` stays gzip-compatible for the CentOS 7-based reprepro publisher.
+  - Do not remove or override that environment variable unless the repo server has been upgraded to libarchive versions that support zstd-compressed control tarballs.
 
 - Upstream sources
   - `upstream.yml` is the only source of truth for upstream version and tarball URL template.
