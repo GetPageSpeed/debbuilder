@@ -77,7 +77,8 @@ if [[ "$NO_FETCH" != "true" ]]; then
     if curl -fsSL "https://raw.githubusercontent.com/GetPageSpeed/debbuilder/refs/heads/main/assets/build?${cache_buster}" > /tmp/latest-build.sh; then
         chmod +x /tmp/latest-build.sh
         echo "Successfully fetched latest build script. Executing..."
-        exec /tmp/latest-build.sh --no-fetch "$@"
+        # Preserve original CLI arguments (e.g. --force) when delegating to the latest script
+        exec /tmp/latest-build.sh --no-fetch ${ORIGINAL_ARGS}
     else
         echo "Failed to fetch latest build script. Using local version."
     fi
