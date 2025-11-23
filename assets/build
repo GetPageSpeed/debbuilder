@@ -94,6 +94,82 @@ find_packages() {
     find "${SOURCES}" -mindepth 1 -type d -name debian -exec dirname {} \;
 }
 
+# Ensure GetPageSpeed APT repo is configured so repo existence checks work.
+# This mirrors the logic from repotest-deb/scripts/setup_repo.sh but is kept
+# lightweight and idempotent for use inside build containers.
+setup_getpagespeed_repo() {
+    local channel="${1:-main}"
+
+    # If repo is already configured, do nothing
+    if [[ -f /etc/apt/sources.list.d/getpagespeed.list ]]; then
+        return 0
+    fi
+
+    # Only Debian/Ubuntu are supported for this helper
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+    else
+        echo "setup_getpagespeed_repo: /etc/os-release missing; skipping GetPageSpeed repo setup."
+        return 1
+    fi
+
+    local family="${ID:-}"
+    local codename="${VERSION_CODENAME:-}"
+
+    case "${family}" in
+        debian|ubuntu) ;;
+        *)
+            echo "setup_getpagespeed_repo: unsupported OS family '${family}'; skipping."
+            return 1
+            ;;
+    esac
+
+    if [[ -z "${codename}" ]] && command -v lsb_release >/dev/null 2>&1; then
+        codename="$(lsb_release -cs || true)"
+    fi
+
+    if [[ -z "${codename}" ]]; then
+        echo "setup_getpagespeed_repo: unable to determine codename; skipping."
+        return 1
+    fi
+
+    # Derive suite: codename or codename-mainline depending on channel
+    local suite="${codename}"
+    if [[ "${channel}" == "mainline" ]]; then
+        suite="${codename}-mainline"
+    fi
+
+    echo "Configuring GetPageSpeed APT repo for ${family} ${suite} (channel=${channel})..."
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y || true
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release || true
+
+    mkdir -p /etc/apt/keyrings
+    local keyring="/etc/apt/keyrings/getpagespeed.gpg"
+    local gpg_url="${GPG_KEY_URL:-https://extras.getpagespeed.com/deb-archive-keyring.gpg}"
+
+    if ! curl -fsSL "${gpg_url}" -o "${keyring}"; then
+        echo "setup_getpagespeed_repo: failed to download ${gpg_url}; skipping repo setup."
+        return 1
+    fi
+
+    chmod 0644 "${keyring}" || true
+
+    local base_url="https://extras.getpagespeed.com/${family}"
+    local list="/etc/apt/sources.list.d/getpagespeed.list"
+
+    echo "deb [signed-by=${keyring}] ${base_url} ${suite} main" > "${list}"
+
+    if ! apt-get update -y; then
+        echo "setup_getpagespeed_repo: apt-get update failed after configuring GetPageSpeed repo; continuing without repo."
+        return 1
+    fi
+
+    return 0
+}
+
 # Function to check if the package (name + version) already exists in the APT repo.
 # We cannot rely on debian/changelog here because it may still contain placeholders
 # (VERSION, REVISION, SUITE_CODENAME) and dpkg-parsechangelog will fail. Instead we
@@ -156,6 +232,15 @@ check_packages_in_repo() {
         else
             flavor="${raw_branch}"
         fi
+
+        # Try to enable the public GetPageSpeed APT repo so apt-cache can see
+        # already-published builds. Map flavor to channel: stable -> main,
+        # anything containing "mainline" -> mainline, everything else -> main.
+        local gps_channel="main"
+        if [[ "${flavor}" == "mainline" || "${flavor}" == *"mainline"* ]]; then
+            gps_channel="mainline"
+        fi
+        setup_getpagespeed_repo "${gps_channel}" || echo "Warning: GetPageSpeed APT repo not configured; repo existence checks may be incomplete."
 
         local revision="gps1+${distro_token}+${flavor}"
         local package_version="${upstream_version}-1~${revision}"
