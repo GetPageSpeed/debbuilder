@@ -92,7 +92,20 @@ fi
 
 # Look for all subdirectories containing a `debian` directory
 find_packages() {
-    find "${SOURCES}" -mindepth 1 -type d -name debian -exec dirname {} \;
+    find "${SOURCES}" -mindepth 1 -type d -name debian -print0 2>/dev/null | while IFS= read -r -d '' debian_dir; do
+        local candidate
+        candidate="$(dirname "${debian_dir}")"
+        if [[ -f "${candidate}/upstream.yml" ]]; then
+            echo "${candidate}"
+        fi
+    done
+}
+
+cleanup_tmpdir() {
+    local dir="$1"
+    if [[ -n "${dir}" && -d "${dir}" ]]; then
+        rm -rf "${dir}"
+    fi
 }
 
 # Ensure GetPageSpeed APT repo is configured so repo existence checks work.
@@ -172,10 +185,8 @@ setup_getpagespeed_repo() {
 }
 
 # Function to check if the package (name + version) already exists in the APT repo.
-# We cannot rely on debian/changelog here because it may still contain placeholders
-# (VERSION, REVISION, SUITE_CODENAME) and dpkg-parsechangelog will fail. Instead we
-# derive the expected version from upstream.yml and the current distro/branch, using
-# the same scheme as the stamping logic in build_package.
+# This must run after debian/changelog is stamped so we can rely on dpkg-parsechangelog
+# to return the exact version (including revisions/epochs set by packaging).
 check_packages_in_repo() {
     local source_dir=$1
     cd "$source_dir"
@@ -185,8 +196,15 @@ check_packages_in_repo() {
         return 1
     fi
 
-    if [[ ! -f "upstream.yml" ]]; then
-        echo "No upstream.yml in ${source_dir}; cannot derive expected version, will build."
+    if [[ ! -f "debian/changelog" ]]; then
+        echo "No debian/changelog in ${source_dir}; cannot check repo, will build."
+        return 1
+    fi
+
+    local package_version
+    package_version="$(dpkg-parsechangelog --show-field Version 2>/dev/null || true)"
+    if [[ -z "${package_version}" ]]; then
+        echo "Unable to determine package version for ${source_dir}; will build."
         return 1
     fi
 
@@ -195,14 +213,6 @@ check_packages_in_repo() {
     package_name="$(awk '/^Source:/{print $2; exit}' debian/control || true)"
     if [[ -z "${package_name}" ]]; then
         package_name="$(basename "$(pwd)")"
-    fi
-
-    # Parse upstream version from upstream.yml (supports quoted or bare numeric)
-    local upstream_version
-    upstream_version="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
-    if [[ -z "${upstream_version}" ]]; then
-        echo "Unable to determine upstream version for ${package_name}; will build."
-        return 1
     fi
 
     # Determine distro and branch to compute the same REVISION we stamp later.
@@ -215,12 +225,7 @@ check_packages_in_repo() {
             echo "Missing OS metadata; cannot compute Debian revision. Will build."
             return 1
         fi
-        local distro_token
-        if [[ "${os_id}" == "debian" ]]; then
-            distro_token="deb${os_version_id}"
-        elif [[ "${os_id}" == "ubuntu" ]]; then
-            distro_token="ubuntu${os_version_id//./}"
-        else
+        if [[ "${os_id}" != "debian" && "${os_id}" != "ubuntu" ]]; then
             echo "Unsupported OS_ID '${os_id}'; will build."
             return 1
         fi
@@ -243,11 +248,8 @@ check_packages_in_repo() {
         fi
         setup_getpagespeed_repo "${gps_channel}" || echo "Warning: GetPageSpeed APT repo not configured; repo existence checks may be incomplete."
 
-        local revision="gps1+${distro_token}+${flavor}"
-        local package_version="${upstream_version}-1~${revision}"
-
         # Check if this exact version already exists in the configured APT repo
-        if apt-cache show "${package_name}=${package_version}" &>/dev/null; then
+        if apt-cache show "${package_name}=${package_version}" 2>/dev/null | grep -q .; then
             echo "Package ${package_name} version ${package_version} already exists in APT repo. Skipping build."
             return 0
         else
@@ -268,128 +270,106 @@ build_package() {
     cd "$source_dir"
     echo "Current directory after cd: $(pwd)"
 
-    if [ "$FORCE" = true ]; then
-        echo "Building package without checking repository because --force is set"
-    elif check_packages_in_repo "${source_dir}"; then
-        echo "Skipping build for ${source_dir}."
-        return 0
-    fi
-
-    # Use upstream.yml (required) for fetching sources
-    if [[ -f "upstream.yml" ]]; then
-        echo "Found upstream.yml; using it for upstream source resolution..."
-        # Determine package name early
-            PACKAGE=""
-            if [[ -f "debian/control" ]]; then
-            PACKAGE=$(awk '/^Source:/{print $2; exit}' debian/control || true)
-            fi
-            if [[ -z "${PACKAGE}" ]]; then
-                PACKAGE=$(basename "$(pwd)")
-            fi
-        # Parse version and source template (support quoted or unquoted values)
-        UPSTREAM_VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
-        TEMPLATE="$(awk -F\" '/^source:[[:space:]]*\"/{print $2; exit} /^source:[[:space:]]*[^#]/{sub(/^source:[[:space:]]*/,""); gsub(/[[:space:]]+#.*/,""); print; exit}' upstream.yml || true)"
-        if [[ -z "${UPSTREAM_VERSION}" ]] || [[ -z "${TEMPLATE}" ]]; then
-            echo "Error: upstream.yml must define both version and source"
-                        return 1
-        fi
-        # Build final URL (support {version} and optional {name})
-        URL="${TEMPLATE//\{version\}/${UPSTREAM_VERSION}}"
-        if printf '%s' "${URL}" | grep -q '{name}'; then
-            URL="${URL//\{name\}/${PACKAGE}}"
-        fi
-        echo "Resolved source URL: ${URL}"
-        # Skip download if already prepared
-        if [[ -d "${PACKAGE}-${UPSTREAM_VERSION}" ]]; then
-            echo "Source directory ${PACKAGE}-${VERSION} already present; skipping download."
-            cd "${PACKAGE}-${UPSTREAM_VERSION}"
-        else
-            FILENAME="$(basename "${URL}")"
-            echo "Downloading ${FILENAME}..."
-            if curl -fsSL -o "${FILENAME}" "${URL}"; then
-                echo "Extracting ${FILENAME}..."
-                tar -xf "${FILENAME}"
-                # Detect top-level directory name from tar
-                TOPDIR="$(tar -tf "${FILENAME}" | head -1 | cut -d/ -f1)"
-                if [[ -n "${TOPDIR}" ]] && [[ -d "${TOPDIR}" ]]; then
-                    # Normalize nested layout like nginx-X/nginx-X/*
-                    if [[ -d "${TOPDIR}/${TOPDIR}" ]]; then
-                        mv "${TOPDIR}/${TOPDIR}"/* "${TOPDIR}/"
-                        rmdir "${TOPDIR}/${TOPDIR}" || true
-                    fi
-                    # If packaging is outside, copy it in
-                    if [[ -d "debian" ]] && [[ ! -d "${TOPDIR}/debian" ]]; then
-                        cp -r debian "${TOPDIR}/"
-                    fi
-                    # Enter extracted top-level directory for build
-                    cd "${TOPDIR}"
-                fi
-                # Remove downloaded archive to keep workspace clean
-                rm -f "${FILENAME}" || true
-            else
-                echo "Error: failed to download ${URL}"
-                return 1
-            fi
-        fi
-        # If module metadata exists, fetch external module source here (not in rules)
-        if [[ -f "../version.yml" ]] && [[ ! -f "version.yml" ]]; then
-            cp -f ../version.yml . || true
-        fi
-        if [[ -f "version.yml" ]]; then
-            echo "Found version.yml; fetching external module source..."
-            # shellcheck disable=SC2015
-            REPO="$(awk -F'\"' '/^repo:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${REPO}" ]] && REPO="$(awk -F': *' '/^repo:[[:space:]]*[^#]/{sub(/^repo:[[:space:]]*/,""); print; exit}' version.yml || true)"
-            TAG="$(awk -F'\"' '/^tag:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${TAG}" ]] && TAG="$(awk -F': *' '/^tag:[[:space:]]*[^#]/{sub(/^tag:[[:space:]]*/,""); print; exit}' version.yml || true)"
-            NAME="$(awk -F'\"' '/^upstream_name:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${NAME}" ]] && NAME="$(awk -F': *' '/^upstream_name:[[:space:]]*[^#]/{sub(/^upstream_name:[[:space:]]*/,""); print; exit}' version.yml || true)"
-            if [[ -n "${REPO}" ]] && [[ -n "${TAG}" ]]; then
-                [[ -z "${NAME}" ]] && NAME="$(basename "${REPO}")"
-                URL_MODULE="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
-                echo "Downloading module from ${URL_MODULE}"
-                if curl -fsSL -o module.tgz "${URL_MODULE}"; then
-                    tar -xzf module.tgz
-                    rm -f module.tgz || true
-                    TAG_NOPREFIX="${TAG#v}"
-                    if [[ -d "${NAME}-${TAG}" ]] && [[ "${TAG}" != "${TAG_NOPREFIX}" ]] && [[ ! -d "${NAME}-${TAG_NOPREFIX}" ]]; then
-                        mv "${NAME}-${TAG}" "${NAME}-${TAG_NOPREFIX}"
-                    fi
-                else
-                    echo "Error: failed to download module from ${URL_MODULE}"
-                    return 1
-                fi
-            else
-                echo "version.yml present but repo/tag missing; skipping external module fetch."
-            fi
-        fi
-    else
+    if [[ ! -f "upstream.yml" ]]; then
         echo "Error: upstream.yml not found. This builder requires upstream.yml with 'version' and 'source'."
         return 1
     fi
 
-    # After fetching sources, ensure we are inside the actual source directory containing debian/
-    # If we are still at the original root (no debian/ here), try to locate and enter it
-    if [[ -d "debian" ]]; then
-        echo "Found debian directory in current location"
-        DEBIAN_DIR="."
-    else
-        # Look for debian directory in subdirectories
-        DEBIAN_DIR=$(find . -name "debian" -type d | head -1 | xargs dirname)
-        if [[ -n "${DEBIAN_DIR}" ]]; then
-            echo "Found debian directory in: ${DEBIAN_DIR}"
-            cd "${DEBIAN_DIR}"
-        else
-            # If no debian directory found, check if we're in a subdirectory that was created by setup.sh
-            # Look for setup.py or other build files to determine if this is the source directory
-            if [[ -f "setup.py" ]] || [[ -f "pyproject.toml" ]] || [[ -f "Makefile" ]]; then
-                echo "Found source directory with build files in current location"
-                DEBIAN_DIR="."
+    echo "Found upstream.yml; using it for upstream source resolution..."
+
+    local PACKAGE=""
+    if [[ -f "debian/control" ]]; then
+        PACKAGE=$(awk '/^Source:/{print $2; exit}' debian/control || true)
+    fi
+    if [[ -z "${PACKAGE}" ]]; then
+        PACKAGE=$(basename "$(pwd)")
+    fi
+
+    UPSTREAM_VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
+    TEMPLATE="$(awk -F\" '/^source:[[:space:]]*\"/{print $2; exit} /^source:[[:space:]]*[^#]/{sub(/^source:[[:space:]]*/,""); gsub(/[[:space:]]+#.*/,""); print; exit}' upstream.yml || true)"
+    if [[ -z "${UPSTREAM_VERSION}" ]] || [[ -z "${TEMPLATE}" ]]; then
+        echo "Error: upstream.yml must define both version and source"
+        return 1
+    fi
+
+    URL="${TEMPLATE//\{version\}/${UPSTREAM_VERSION}}"
+    if printf '%s' "${URL}" | grep -q '{name}'; then
+        URL="${URL//\{name\}/${PACKAGE}}"
+    fi
+    echo "Resolved source URL: ${URL}"
+
+    local WORKDIR=""
+    WORKDIR="$(mktemp -d -p "${TMPDIR:-/tmp}" debbuilder.XXXXXX)" || {
+        echo "Error: failed to create temporary build directory."
+        return 1
+    }
+
+    local FILENAME
+    FILENAME="$(basename "${URL}")"
+    local ARCHIVE_PATH="${WORKDIR}/${FILENAME}"
+
+    echo "Downloading ${FILENAME}..."
+    if ! curl -fsSL -o "${ARCHIVE_PATH}" "${URL}"; then
+        echo "Error: failed to download ${URL}"
+        cleanup_tmpdir "${WORKDIR}"
+        return 1
+    fi
+
+    echo "Extracting ${FILENAME}..."
+    if ! tar -xf "${ARCHIVE_PATH}" -C "${WORKDIR}"; then
+        echo "Error: failed to extract ${ARCHIVE_PATH}"
+        cleanup_tmpdir "${WORKDIR}"
+        return 1
+    fi
+
+    local TOPDIR
+    TOPDIR="$(tar -tf "${ARCHIVE_PATH}" | head -1 | cut -d/ -f1)"
+    rm -f "${ARCHIVE_PATH}" || true
+
+    local BUILD_ROOT="${WORKDIR}"
+    if [[ -n "${TOPDIR}" && -d "${WORKDIR}/${TOPDIR}" ]]; then
+        BUILD_ROOT="${WORKDIR}/${TOPDIR}"
+    fi
+
+    if [[ -d "${BUILD_ROOT}/${TOPDIR}" ]]; then
+        mv "${BUILD_ROOT}/${TOPDIR}"/* "${BUILD_ROOT}/"
+        rmdir "${BUILD_ROOT}/${TOPDIR}" || true
+    fi
+
+    if [[ ! -d "${BUILD_ROOT}/debian" ]]; then
+        cp -r "${source_dir}/debian" "${BUILD_ROOT}/"
+    fi
+
+    if [[ -f "${source_dir}/version.yml" ]] && [[ ! -f "${BUILD_ROOT}/version.yml" ]]; then
+        cp -f "${source_dir}/version.yml" "${BUILD_ROOT}/" || true
+    fi
+
+    cd "${BUILD_ROOT}"
+
+    if [[ -f "version.yml" ]]; then
+        echo "Found version.yml; fetching external module source..."
+        # shellcheck disable=SC2015
+        REPO="$(awk -F'\"' '/^repo:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${REPO}" ]] && REPO="$(awk -F': *' '/^repo:[[:space:]]*[^#]/{sub(/^repo:[[:space:]]*/,""); print; exit}' version.yml || true)"
+        TAG="$(awk -F'\"' '/^tag:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${TAG}" ]] && TAG="$(awk -F': *' '/^tag:[[:space:]]*[^#]/{sub(/^tag:[[:space:]]*/,""); print; exit}' version.yml || true)"
+        NAME="$(awk -F'\"' '/^upstream_name:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${NAME}" ]] && NAME="$(awk -F': *' '/^upstream_name:[[:space:]]*[^#]/{sub(/^upstream_name:[[:space:]]*/,""); print; exit}' version.yml || true)"
+        if [[ -n "${REPO}" ]] && [[ -n "${TAG}" ]]; then
+            [[ -z "${NAME}" ]] && NAME="$(basename "${REPO}")"
+            URL_MODULE="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+            echo "Downloading module from ${URL_MODULE}"
+            if curl -fsSL -o module.tgz "${URL_MODULE}"; then
+                tar -xzf module.tgz
+                rm -f module.tgz || true
+                TAG_NOPREFIX="${TAG#v}"
+                if [[ -d "${NAME}-${TAG}" ]] && [[ "${TAG}" != "${TAG_NOPREFIX}" ]] && [[ ! -d "${NAME}-${TAG_NOPREFIX}" ]]; then
+                    mv "${NAME}-${TAG}" "${NAME}-${TAG_NOPREFIX}"
+                fi
             else
-                echo "Error: No debian directory or source files found after setup.sh"
-                echo "Current directory contents:"
-                ls -la
-                echo "Looking for debian directories:"
-                find . -name "debian" -type d 2>/dev/null || echo "No debian directories found"
+                echo "Error: failed to download module from ${URL_MODULE}"
+                cleanup_tmpdir "${WORKDIR}"
                 return 1
             fi
+        else
+            echo "version.yml present but repo/tag missing; skipping external module fetch."
         fi
     fi
 
@@ -411,10 +391,12 @@ build_package() {
         OS_VERSION_ID="${VERSION_ID:-}"
         if [[ -z "${SUITE_CODENAME}" || -z "${OS_ID}" || -z "${OS_VERSION_ID}" ]]; then
             echo "Error: Missing fields in /etc/os-release (need VERSION_CODENAME, ID, VERSION_ID)."
+            cleanup_tmpdir "${WORKDIR}"
             return 1
         fi
     else
         echo "Error: /etc/os-release not found; cannot determine suite and distro token."
+        cleanup_tmpdir "${WORKDIR}"
         return 1
     fi
 
@@ -428,14 +410,13 @@ build_package() {
         DISTRO_TOKEN="ubuntu${OS_VERSION_ID//./}"
     else
         echo "Error: Unsupported OS_ID '${OS_ID}'. Only debian/ubuntu are supported."
+        cleanup_tmpdir "${WORKDIR}"
         return 1
     fi
 
     # Determine flavor based on branch env (GIT_BRANCH preferred)
     RAW_BRANCH="${GIT_BRANCH:-${CIRCLE_BRANCH:-${BRANCH:-}}}"
-    if [[ "${RAW_BRANCH}" == "main" ]]; then
-        FLAVOR="stable"
-    elif [[ "${RAW_BRANCH}" == "master" ]]; then
+    if [[ -z "${RAW_BRANCH}" || "${RAW_BRANCH}" == "main" || "${RAW_BRANCH}" == "master" ]]; then
         FLAVOR="stable"
     else
         FLAVOR="${RAW_BRANCH}"
@@ -511,6 +492,14 @@ build_package() {
         fi
     fi
 
+    if [ "$FORCE" = true ]; then
+        echo "Building package without checking repository because --force is set"
+    elif check_packages_in_repo "$(pwd)"; then
+        echo "Skipping build for ${source_dir}."
+        cleanup_tmpdir "${WORKDIR}"
+        return 0
+    fi
+
     # Clean up old build artifacts
     if [[ -f "debian/rules" ]]; then
         make -f debian/rules clean || dh clean || true
@@ -580,6 +569,7 @@ build_package() {
                         *)
                             echo "Error: Unknown Debian version $DEBIAN_VERSION. Cannot safely determine repository."
                             echo "Please ensure /etc/os-release is available or update this script for new Debian versions."
+                            cleanup_tmpdir "${WORKDIR}"
                             return 1
                             ;;
                     esac
@@ -587,6 +577,7 @@ build_package() {
                 else
                     echo "Error: Could not detect distribution"
                     echo "Neither /etc/os-release nor /etc/debian_version found."
+                    cleanup_tmpdir "${WORKDIR}"
                     return 1
                 fi
 
@@ -602,6 +593,7 @@ EOF
                     echo "Error: Failed to update package lists even after reconfiguring repositories"
                     echo "Restoring original sources.list..."
                     cp /etc/apt/sources.list.backup /etc/apt/sources.list 2>/dev/null || true
+                    cleanup_tmpdir "${WORKDIR}"
                     return 1
                 fi
             fi
@@ -659,6 +651,7 @@ EOF
     # Build the package
     debuild -us -uc -b || {
         echo "Failed to build ${source_dir}."
+        cleanup_tmpdir "${WORKDIR}"
         return 1
     }
 
@@ -687,6 +680,8 @@ EOF
             fi
         done
     fi
+
+    cleanup_tmpdir "${WORKDIR}"
 
     echo "Package built successfully for ${source_dir}."
 }
