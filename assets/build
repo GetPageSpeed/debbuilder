@@ -15,7 +15,9 @@ OUTPUT=${OUTPUT-${SOURCES}}
 # If a GitHub token is provided, configure netrc/curl for private source access
 # Prefer GITHUB_TOKEN, then GITHUB_API_TOKEN, then LASTVERSION_GITHUB_API_TOKEN
 GH_TOK="${GITHUB_TOKEN:-${GITHUB_API_TOKEN:-${LASTVERSION_GITHUB_API_TOKEN}}}"
+echo "GitHub token detection: GITHUB_TOKEN=${GITHUB_TOKEN:+set} GITHUB_API_TOKEN=${GITHUB_API_TOKEN:+set} LASTVERSION_GITHUB_API_TOKEN=${LASTVERSION_GITHUB_API_TOKEN:+set} GH_TOK=${GH_TOK:+set}"
 if [ -n "${GH_TOK}" ]; then
+  echo "Configuring .netrc for GitHub private repo access..."
   # use restrictive umask only for writing secrets, then restore
   __OLD_UMASK=$(umask)
   umask 077
