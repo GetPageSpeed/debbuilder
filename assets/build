@@ -15,9 +15,7 @@ OUTPUT=${OUTPUT-${SOURCES}}
 # If a GitHub token is provided, configure netrc/curl for private source access
 # Prefer GITHUB_TOKEN, then GITHUB_API_TOKEN, then LASTVERSION_GITHUB_API_TOKEN
 GH_TOK="${GITHUB_TOKEN:-${GITHUB_API_TOKEN:-${LASTVERSION_GITHUB_API_TOKEN}}}"
-echo "GitHub token detection: GITHUB_TOKEN=${GITHUB_TOKEN:+set} GITHUB_API_TOKEN=${GITHUB_API_TOKEN:+set} LASTVERSION_GITHUB_API_TOKEN=${LASTVERSION_GITHUB_API_TOKEN:+set} GH_TOK=${GH_TOK:+set}"
 if [ -n "${GH_TOK}" ]; then
-  echo "Configuring .netrc for GitHub private repo access..."
   # use restrictive umask only for writing secrets, then restore
   __OLD_UMASK=$(umask)
   umask 077
@@ -369,6 +367,8 @@ build_package() {
 
     cd "${BUILD_ROOT}"
 
+    # Track module version separately for combined versioning (like RPM's nginx_version+module_version)
+    MODULE_VERSION=""
     if [[ -f "version.yml" ]]; then
         echo "Found version.yml; fetching external module source..."
         # shellcheck disable=SC2015
@@ -383,6 +383,7 @@ build_package() {
                 tar -xzf module.tgz
                 rm -f module.tgz || true
                 TAG_NOPREFIX="${TAG#v}"
+                MODULE_VERSION="${TAG_NOPREFIX}"
                 if [[ -d "${NAME}-${TAG}" ]] && [[ "${TAG}" != "${TAG_NOPREFIX}" ]] && [[ ! -d "${NAME}-${TAG_NOPREFIX}" ]]; then
                     mv "${NAME}-${TAG}" "${NAME}-${TAG_NOPREFIX}"
                 fi
@@ -471,19 +472,26 @@ build_package() {
         } > debian/changelog
     fi
 
+    # Compute package version: nginx_version+module_version (like RPM) when module exists
+    PACKAGE_VERSION="${UPSTREAM_VERSION}"
+    if [[ -n "${MODULE_VERSION}" ]]; then
+        PACKAGE_VERSION="${UPSTREAM_VERSION}+${MODULE_VERSION}"
+        echo "Module version detected: using combined version ${PACKAGE_VERSION}"
+    fi
+
     STAMPED=false
     if grep -qE 'VERSION|REVISION|SUITE_CODENAME' debian/changelog; then
-        [[ -n "${UPSTREAM_VERSION}" ]] && sed -i "s/VERSION/${UPSTREAM_VERSION}/g" debian/changelog
+        [[ -n "${PACKAGE_VERSION}" ]] && sed -i "s/VERSION/${PACKAGE_VERSION}/g" debian/changelog
         sed -i "s/REVISION/${REVISION}/g" debian/changelog
         sed -i "s/SUITE_CODENAME/${SUITE_CODENAME}/g" debian/changelog
-        echo "Stamped debian/changelog with VERSION=${UPSTREAM_VERSION}, REVISION=${REVISION}, SUITE_CODENAME=${SUITE_CODENAME}"
+        echo "Stamped debian/changelog with VERSION=${PACKAGE_VERSION}, REVISION=${REVISION}, SUITE_CODENAME=${SUITE_CODENAME}"
         STAMPED=true
     fi
 
     # If debian/control uses VERSION as a placeholder anywhere
     # (e.g. Provides: nginx-rVERSION, Depends: foo-VERSION, etc.),
-    # stamp it to the resolved upstream version so this logic is
-    # reusable beyond nginx-specific packages.
+    # stamp it to the resolved upstream version (NOT combined version,
+    # as dependencies like nginx-rVERSION need just the nginx version).
     if [[ -n "${UPSTREAM_VERSION}" ]] && [[ -f "debian/control" ]] && grep -q "VERSION" debian/control; then
         sed -i "s/VERSION/${UPSTREAM_VERSION}/g" debian/control
         echo "Stamped debian/control with VERSION=${UPSTREAM_VERSION}"
