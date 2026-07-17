@@ -1,6 +1,7 @@
 name: CI
 on:
   push:
+  workflow_dispatch:
   schedule:
     - cron: "35 */6 * * *"
 jobs:
@@ -84,4 +85,4 @@ jobs:
             "$(./crypt-keeper.sh docker-image-name ${{ matrix.os }} ${{ matrix.version }})" build
 
       - name: Push to Docker Hub
-        run: ./crypt-keeper.sh push ${{ matrix.os }} ${{ matrix.version }} 
+        run: ./crypt-keeper.sh push ${{ matrix.os }} ${{ matrix.version }}
