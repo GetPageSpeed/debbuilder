@@ -3,6 +3,28 @@
 # use exit codes of failing commands
 set -exo pipefail
 
+read_simple_yaml_value() {
+  local file="$1"
+  local key="$2"
+  awk -v key="${key}" '
+    $0 ~ "^" key ":[[:space:]]*" {
+      sub("^" key ":[[:space:]]*", "")
+      sub(/[[:space:]]+#.*/, "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' "${file}"
+}
+
+# Unit tests source this file only to exercise the parser above.
+if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
+  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+  fi
+  exit 0
+fi
+
  # Ensure dpkg-deb always emits gzip-compressed control data to satisfy older reprepro
 export DPKG_DEB="dpkg-deb -Zxz -z9 --uniform-compression"
 
@@ -99,6 +121,7 @@ if [[ "$NO_FETCH" != "true" ]]; then
         chmod +x /tmp/latest-build.sh
         echo "Successfully fetched latest build script. Executing..."
         # Preserve original CLI arguments (e.g. --force) when delegating to the latest script
+        # shellcheck disable=SC2086 # Replay the original argument string.
         exec /tmp/latest-build.sh --no-fetch ${ORIGINAL_ARGS}
     else
         echo "Failed to fetch latest build script. Using local version."
@@ -372,18 +395,19 @@ build_package() {
     if [[ -f "version.yml" ]]; then
         echo "Found version.yml; fetching external module source..."
         # shellcheck disable=SC2015
-        REPO="$(awk -F'\"' '/^repo:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${REPO}" ]] && REPO="$(awk -F': *' '/^repo:[[:space:]]*[^#]/{sub(/^repo:[[:space:]]*/,""); print; exit}' version.yml || true)"
-        TAG="$(awk -F'\"' '/^tag:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${TAG}" ]] && TAG="$(awk -F': *' '/^tag:[[:space:]]*[^#]/{sub(/^tag:[[:space:]]*/,""); print; exit}' version.yml || true)"
-        NAME="$(awk -F'\"' '/^upstream_name:[[:space:]]*\"/{print $2; exit}' version.yml || true)"; [[ -z "${NAME}" ]] && NAME="$(awk -F': *' '/^upstream_name:[[:space:]]*[^#]/{sub(/^upstream_name:[[:space:]]*/,""); print; exit}' version.yml || true)"
+        REPO="$(read_simple_yaml_value version.yml repo)"
+        TAG="$(read_simple_yaml_value version.yml tag)"
+        NAME="$(read_simple_yaml_value version.yml upstream_name)"
+        VERSION_OVERRIDE="$(read_simple_yaml_value version.yml tag_no_prefix)"
         if [[ -n "${REPO}" ]] && [[ -n "${TAG}" ]]; then
             [[ -z "${NAME}" ]] && NAME="$(basename "${REPO}")"
+            TAG_NOPREFIX="${TAG#v}"
+            MODULE_VERSION="${VERSION_OVERRIDE:-${TAG_NOPREFIX}}"
             URL_MODULE="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
             echo "Downloading module from ${URL_MODULE}"
             if curl -fsSL -o module.tgz "${URL_MODULE}"; then
                 tar -xzf module.tgz
                 rm -f module.tgz || true
-                TAG_NOPREFIX="${TAG#v}"
-                MODULE_VERSION="${TAG_NOPREFIX}"
                 if [[ -d "${NAME}-${TAG}" ]] && [[ "${TAG}" != "${TAG_NOPREFIX}" ]] && [[ ! -d "${NAME}-${TAG_NOPREFIX}" ]]; then
                     mv "${NAME}-${TAG}" "${NAME}-${TAG_NOPREFIX}"
                 fi
@@ -588,6 +612,7 @@ build_package() {
 
                 # Try to detect the distribution dynamically
                 if [[ -f /etc/os-release ]]; then
+                    # shellcheck disable=SC1091
                     source /etc/os-release
                     DISTRO_NAME="${VERSION_CODENAME:-${ID}}"
                     echo "Detected distribution: $DISTRO_NAME"
@@ -667,6 +692,7 @@ EOF
                     | tr -d '\n' | sed 's/, */\n/g' | sed 's/ (.*)//g' | sed 's/|/ /g' | awk '{print $1}' | grep -v -E '^[[:space:]]*$' || true)
                 if [[ -n "${RAW_DEPS}" ]]; then
                     echo "Installing parsed Build-Depends: ${RAW_DEPS}"
+                    # shellcheck disable=SC2086 # RAW_DEPS is a package list.
                     if ! apt-get install -y --no-install-recommends ${RAW_DEPS}; then
                         echo "Warning: direct install of parsed Build-Depends failed; continuing."
                     fi
@@ -702,6 +728,7 @@ EOF
                 # Extract current version from the deb filename
                 current_version=$(echo "$deb" | sed -n 's/.*_\([0-9]\+\.[0-9]\+\.[0-9]\+\)-[0-9]_.*/\1/p')
                 if [[ -n "$current_version" ]]; then
+                    # shellcheck disable=SC2001
                     newname=$(echo "$deb" | sed "s/_${current_version}-[0-9]_/_${current_version}-1.${DISTRO}_/")
                     if [[ "$deb" != "$newname" ]]; then
                         mv "$deb" "$newname"
