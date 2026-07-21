@@ -70,6 +70,22 @@ To enable additional APT repositories before building:
 docker run -v ${SOURCE_DIR}:/sources -v ${OUTPUT_DIR}:/output debbuilder:ubuntu-noble --enable-repos "ppa:some-ppa/ppa"
 ```
 
+### Explicit distro exclusions
+
+A package may carry `debian/debbuilder-exclude-dists` when a dependency or
+base-server feature is known to be unavailable on a target. Put one normalized
+distro ID or shell-style glob on each line, for example:
+
+```text
+ubuntu2004
+debian13
+```
+
+The IDs are `/etc/os-release` `ID` plus `VERSION_ID` with punctuation removed.
+Matching packages are skipped before any source download or dependency work.
+Plesk cohorts otherwise require zero package failures; ordinary cohorts keep
+their existing tolerance.
+
 ## Debugging
 
 For interactive debugging, you can run the container with a bash shell:
