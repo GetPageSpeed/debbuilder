@@ -8,6 +8,7 @@
             "dist": "ubuntu",
             "dir": "ubuntu",
             "description": "Ubuntu Linux",
+            "human_label": "Ubuntu",
             "has_plesk": true,
             "docker": "ubuntu",
             "packager": "apt",
@@ -38,7 +39,8 @@
             "dist": "debian",
             "dir": "debian",
             "description": "Debian Linux",
-            "has_plesk": false,
+            "human_label": "Debian",
+            "has_plesk": true,
             "docker": "debian",
             "packager": "apt",
             "versions_check": false,
@@ -52,10 +54,10 @@
             },
             "version_overrides": {
                 "12": {
-                    "has_plesk": false
+                    "has_plesk": true
                 },
                 "13": {
-                    "has_plesk": false
+                    "has_plesk": true
                 }
             }
         }
@@ -72,7 +74,7 @@
                 {
                     "run": {
                         "name": "Set up plesk macro if passed by a job",
-                        "command": "[ -z ${PLESK+x} ] || echo \"plesk_version=${PLESK}\" >> debmacros\n"
+                        "command": "if [[ \"${PLESK:-0}\" != \"0\" ]]; then\n  echo \"plesk_version=${PLESK}\" >> debmacros\nfi\n"
                     }
                 }
             ],
@@ -97,14 +99,12 @@
                     "description": "Plesk",
                     "plesk_version": 18,
                     "only_dists": [
-                        "ubuntu*"
+                        "ubuntu*",
+                        "debian*"
                     ],
                     "only_archs": [
                         "amd64"
                     ]
-                },
-                "freenginx-stable": {
-                    "description": "FreeNGINX Stable"
                 },
                 "freenginx-mainline": {
                     "description": "FreeNGINX Mainline"

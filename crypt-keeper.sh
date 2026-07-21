@@ -43,6 +43,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ADD ./assets/build /usr/bin/build
 ADD ./assets/check-deps.sh /usr/bin/check-deps.sh
+ADD ./assets/plesk-target.py /usr/bin/plesk-target
 #ADD ./assets/deblint.config /etc/deblint/config
 ADD ./assets/transient/* /tmp/
 
