@@ -53,6 +53,41 @@ EOF
   fi
 }
 
+debbuilder_dist_id() {
+  local os_release="${DEBBUILDER_OS_RELEASE:-/etc/os-release}"
+  local ID=""
+  local VERSION_ID=""
+
+  [[ -f "${os_release}" ]] || return 1
+  # shellcheck disable=SC1090 # The path is injectable for unit tests.
+  . "${os_release}"
+  [[ -n "${ID}" && -n "${VERSION_ID}" ]] || return 1
+  printf '%s%s\n' "${ID}" "${VERSION_ID//./}"
+}
+
+package_excluded_for_dist() {
+  local source_dir="$1"
+  local dist_id="$2"
+  local exclusions="${source_dir}/debian/debbuilder-exclude-dists"
+  local pattern
+
+  [[ -f "${exclusions}" ]] || return 1
+  while IFS= read -r pattern || [[ -n "${pattern}" ]]; do
+    [[ -n "${pattern}" && "${pattern}" != \#* ]] || continue
+    # The file intentionally accepts shell-style globs such as ubuntu20*.
+    # shellcheck disable=SC2053
+    if [[ "${dist_id}" == ${pattern} ]]; then
+      return 0
+    fi
+  done < "${exclusions}"
+  return 1
+}
+
+plesk_failure_is_fatal() {
+  local fail_count="$1"
+  [[ "${PLESK_BUILD:-false}" == "true" && "${fail_count}" -gt 0 ]]
+}
+
 # Unit tests source this file only to exercise the parser above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -367,6 +402,13 @@ build_package() {
     echo "Current directory before cd: $(pwd)"
     cd "$source_dir"
     echo "Current directory after cd: $(pwd)"
+
+    local current_dist_id=""
+    current_dist_id="$(debbuilder_dist_id || true)"
+    if [[ -n "${current_dist_id}" ]] && package_excluded_for_dist "${source_dir}" "${current_dist_id}"; then
+        echo "Skipping ${source_dir}: explicitly excluded on ${current_dist_id}."
+        return 0
+    fi
 
     if [[ ! -f "upstream.yml" ]]; then
         echo "Error: upstream.yml not found. This builder requires upstream.yml with 'version' and 'source'."
@@ -852,6 +894,11 @@ for package_dir in $package_dirs; do
     success_count=$((success_count + 1))
   else
     fail_count=$((fail_count + 1))
+  fi
+
+  if plesk_failure_is_fatal "${fail_count}"; then
+    echo "Plesk cohort requires zero unexpected failures; ${package_dir} failed."
+    exit 1
   fi
 
   # Check if failure tolerance is exceeded
