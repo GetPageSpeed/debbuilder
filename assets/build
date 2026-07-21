@@ -78,6 +78,7 @@ FORCE=false
 ENABLE_REPOS=""
 EXTERNAL_BUILD_SCRIPT=""
 NO_FETCH=false
+PLESK_BUILD=false
 
 # Store original arguments for checking --no-fetch
 ORIGINAL_ARGS="$*"
@@ -116,6 +117,41 @@ while [[ "$1" != "" ]]; do
     esac
     shift # Move to the next argument
 done
+
+# Plesk module builds use a committed per-target manifest. Resolve it once per
+# job so every module in the cohort is stamped against the same sw-nginx build.
+RAW_BUILD_BRANCH="${GIT_BRANCH:-${CIRCLE_BRANCH:-${BRANCH:-}}}"
+if [[ "${RAW_BUILD_BRANCH}" == "plesk" || "${PLESK:-0}" != "0" ]]; then
+    PLESK_MANIFEST="${SOURCES}/plesk-builds.json"
+    if [[ ! -f "${PLESK_MANIFEST}" ]]; then
+        echo "Error: Plesk build requested but ${PLESK_MANIFEST} is missing"
+        exit 1
+    fi
+    if ! command -v plesk-target >/dev/null 2>&1; then
+        echo "Error: Plesk build requested but /usr/bin/plesk-target is unavailable"
+        exit 1
+    fi
+    eval "$(plesk-target --shell "${PLESK_MANIFEST}")"
+    export PLESK_NGINX_VERSION PLESK_NGINX_SOURCE_URL
+    export PLESK_SW_NGINX_PACKAGE_VERSION
+    export PLESK_BUILD_FINGERPRINT PLESK_BASE_CONFIGURE_ARGS
+    export PLESK_SW_NGINX_URL PLESK_MOD_SECURITY_URL
+    PLESK_BUILD=true
+    echo "Selected Plesk sw-nginx ${PLESK_SW_NGINX_PACKAGE_VERSION}"
+fi
+
+if [[ "${PLESK_BUILD}" == "true" ]]; then
+    # Older generated Ubuntu images still carry plain-HTTP archive URLs. Some
+    # build networks refuse those connections, leaving apt with empty indexes.
+    for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [[ -f "${apt_source}" ]] || continue
+        sed -i \
+            -e 's|http://ports\.ubuntu\.com|https://ports.ubuntu.com|g' \
+            -e 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g' \
+            -e 's|http://security\.ubuntu\.com|https://security.ubuntu.com|g' \
+            "${apt_source}"
+    done
+fi
 
 # If external build script is specified, fetch and use it
 if [[ -n "${EXTERNAL_BUILD_SCRIPT}" ]]; then
@@ -349,6 +385,10 @@ build_package() {
 
     UPSTREAM_VERSION="$(awk -F\" '/^version:[[:space:]]*\"/{print $2; exit} /^version:[[:space:]]*[0-9]/{gsub(/^version:[[:space:]]*/,""); print; exit}' upstream.yml || true)"
     TEMPLATE="$(awk -F\" '/^source:[[:space:]]*\"/{print $2; exit} /^source:[[:space:]]*[^#]/{sub(/^source:[[:space:]]*/,""); gsub(/[[:space:]]+#.*/,""); print; exit}' upstream.yml || true)"
+    if [[ "${PLESK_BUILD}" == "true" ]]; then
+        UPSTREAM_VERSION="${PLESK_NGINX_VERSION}"
+        TEMPLATE="${PLESK_NGINX_SOURCE_URL}"
+    fi
     if [[ -z "${UPSTREAM_VERSION}" ]] || [[ -z "${TEMPLATE}" ]]; then
         echo "Error: upstream.yml must define both version and source"
         return 1
@@ -407,6 +447,27 @@ build_package() {
     fi
 
     cd "${BUILD_ROOT}"
+
+    if [[ "${PLESK_BUILD}" == "true" ]]; then
+        python3 - "${PLESK_SW_NGINX_PACKAGE_VERSION}" "${PLESK_BASE_CONFIGURE_ARGS}" <<'PY'
+from pathlib import Path
+import sys
+
+sw_nginx_version, configure_args = sys.argv[1:]
+replacements = {
+    "PLESK_SW_NGINX_PACKAGE_VERSION": sw_nginx_version,
+    "PLESK_BASE_CONFIGURE_ARGS": configure_args,
+}
+for relative in ("debian/control", "debian/rules"):
+    path = Path(relative)
+    if not path.exists():
+        continue
+    content = path.read_text()
+    for placeholder, value in replacements.items():
+        content = content.replace(placeholder, value)
+    path.write_text(content)
+PY
+    fi
 
     # Track module version separately for combined versioning (like RPM's nginx_version+module_version)
     MODULE_VERSION=""
@@ -519,6 +580,10 @@ build_package() {
     if [[ -n "${MODULE_VERSION}" ]]; then
         PACKAGE_VERSION="${UPSTREAM_VERSION}+${MODULE_VERSION}"
         echo "Module version detected: using combined version ${PACKAGE_VERSION}"
+    fi
+    if [[ "${PLESK_BUILD}" == "true" ]]; then
+        PACKAGE_VERSION="${PACKAGE_VERSION}+${PLESK_BUILD_FINGERPRINT}"
+        echo "Plesk build detected: using ABI-specific version ${PACKAGE_VERSION}"
     fi
 
     STAMPED=false
