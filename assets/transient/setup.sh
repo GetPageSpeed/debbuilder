@@ -2,6 +2,34 @@
 shopt -s extglob
 set -euxo pipefail
 
+install_required_packages() {
+    local packages="$1"
+    local max_attempts="${APT_INSTALL_ATTEMPTS:-3}"
+    local retry_delay="${APT_RETRY_DELAY_SECONDS:-5}"
+    local attempt=1
+
+    while true; do
+        # shellcheck disable=SC2086 # The package lists are intentionally word-split.
+        if ${PKGR} -y install ${packages}; then
+            return 0
+        fi
+
+        if (( attempt >= max_attempts )); then
+            echo "Failed to install required packages after ${attempt} attempts: ${packages}" >&2
+            return 1
+        fi
+
+        echo "Required package installation failed (attempt ${attempt}/${max_attempts}); refreshing indexes before retry..." >&2
+        ${PKGR} update -y || true
+        sleep "${retry_delay}"
+        attempt=$((attempt + 1))
+    done
+}
+
+if [[ "${DEBBUILDER_SETUP_HELPERS_ONLY:-0}" == "1" ]]; then
+    return 0
+fi
+
 # Set non-interactive frontend to avoid prompts during package installation
 export DEBIAN_FRONTEND=noninteractive
 
@@ -64,10 +92,10 @@ until ${PKGR} update -y; do
   echo "apt-get update failed (attempt ${n}); retrying in 5s..."
   sleep 5
 done
-${PKGR} -y install ${PRE_PACKAGES} || true
+install_required_packages "${PRE_PACKAGES}"
 
 # Install the core development and packaging tools
-${PKGR} -y install ${PACKAGES} || true
+install_required_packages "${PACKAGES}"
 
 # Create build directories
 DEB_BUILD_DIR=/root/debbuild
