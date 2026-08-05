@@ -88,6 +88,17 @@ plesk_failure_is_fatal() {
   [[ "${PLESK_BUILD:-false}" == "true" && "${fail_count}" -gt 0 ]]
 }
 
+getpagespeed_repo_suites() {
+  local codename="$1"
+  local channel="${2:-main}"
+
+  # Stable is the dependency base for every optional channel.
+  printf '%s\n' "${codename}"
+  if [[ "${channel}" != "main" && "${channel}" != "stable" ]]; then
+    printf '%s\n' "${codename}-${channel}"
+  fi
+}
+
 # Unit tests source this file only to exercise the parser above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -281,13 +292,7 @@ setup_getpagespeed_repo() {
         return 1
     fi
 
-    # Derive suite: codename or codename-mainline depending on channel
-    local suite="${codename}"
-    if [[ "${channel}" == "mainline" ]]; then
-        suite="${codename}-mainline"
-    fi
-
-    echo "Configuring GetPageSpeed APT repo for ${family} ${suite} (channel=${channel})..."
+    echo "Configuring GetPageSpeed APT repo for ${family} ${codename} (channel=${channel})..."
 
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y || true
@@ -307,7 +312,10 @@ setup_getpagespeed_repo() {
     local base_url="https://extras.getpagespeed.com/${family}"
     local list="/etc/apt/sources.list.d/getpagespeed.list"
 
-    echo "deb [signed-by=${keyring}] ${base_url} ${suite} main" > "${list}"
+    : > "${list}"
+    while IFS= read -r suite; do
+        echo "deb [signed-by=${keyring}] ${base_url} ${suite} main" >> "${list}"
+    done < <(getpagespeed_repo_suites "${codename}" "${channel}")
 
     if ! apt-get update -y; then
         echo "setup_getpagespeed_repo: apt-get update failed after configuring GetPageSpeed repo; continuing without repo."
