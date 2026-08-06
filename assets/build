@@ -99,6 +99,17 @@ getpagespeed_repo_suites() {
   fi
 }
 
+getpagespeed_channel_from_repo_id() {
+  # Map a CI repo identifier (getpagespeed-extras[-<channel>]) to a channel.
+  local repo_id="$1"
+  local channel="${repo_id#getpagespeed-extras}"
+  channel="${channel#-}"
+  if [[ -z "${channel}" || "${channel}" == "stable" ]]; then
+    channel="main"
+  fi
+  printf '%s\n' "${channel}"
+}
+
 # Unit tests source this file only to exercise the parser above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -228,11 +239,24 @@ if [[ "$NO_FETCH" != "true" ]]; then
     fi
 fi
 
-# Enable additional repositories if needed
-if [[ -n ${ENABLE_REPOS} ]]; then
-  add-apt-repository "${ENABLE_REPOS}" || exit 1
-  apt-get update
-fi
+# Enable additional repositories if needed. GetPageSpeed channel identifiers
+# (getpagespeed-extras[-<channel>]) are not apt shortcuts, so they route through
+# setup_getpagespeed_repo; anything else goes to add-apt-repository verbatim.
+# Invoked below, after the functions it needs are defined.
+enable_additional_repos() {
+    [[ -n "${ENABLE_REPOS}" ]] || return 0
+    case "${ENABLE_REPOS}" in
+        getpagespeed-extras|getpagespeed-extras-*)
+            local channel
+            channel="$(getpagespeed_channel_from_repo_id "${ENABLE_REPOS}")"
+            setup_getpagespeed_repo "${channel}" || exit 1
+            ;;
+        *)
+            add-apt-repository "${ENABLE_REPOS}" || exit 1
+            apt-get update
+            ;;
+    esac
+}
 
 # Look for all subdirectories containing a `debian` directory
 find_packages() {
@@ -257,11 +281,6 @@ cleanup_tmpdir() {
 # lightweight and idempotent for use inside build containers.
 setup_getpagespeed_repo() {
     local channel="${1:-main}"
-
-    # If repo is already configured, do nothing
-    if [[ -f /etc/apt/sources.list.d/getpagespeed.list ]]; then
-        return 0
-    fi
 
     # Only Debian/Ubuntu are supported for this helper
     if [[ -f /etc/os-release ]]; then
@@ -290,6 +309,23 @@ setup_getpagespeed_repo() {
     if [[ -z "${codename}" ]]; then
         echo "setup_getpagespeed_repo: unable to determine codename; skipping."
         return 1
+    fi
+
+    # Already configured with every suite this channel needs? Nothing to do.
+    # (A plain existence check is not enough: a stable-only list must be
+    # upgraded in place when a channel like mainline is requested.)
+    local existing_list="/etc/apt/sources.list.d/getpagespeed.list"
+    if [[ -f "${existing_list}" ]]; then
+        local suites_missing=0
+        local wanted_suite
+        while IFS= read -r wanted_suite; do
+            if ! grep -q " ${wanted_suite} main$" "${existing_list}"; then
+                suites_missing=1
+            fi
+        done < <(getpagespeed_repo_suites "${codename}" "${channel}")
+        if [[ "${suites_missing}" -eq 0 ]]; then
+            return 0
+        fi
     fi
 
     echo "Configuring GetPageSpeed APT repo for ${family} ${codename} (channel=${channel})..."
@@ -876,6 +912,8 @@ EOF
 
     echo "Package built successfully for ${source_dir}."
 }
+
+enable_additional_repos
 
 # Find all packages and build them
 echo "SOURCES directory: ${SOURCES}"
