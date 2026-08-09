@@ -88,6 +88,67 @@ plesk_failure_is_fatal() {
   [[ "${PLESK_BUILD:-false}" == "true" && "${fail_count}" -gt 0 ]]
 }
 
+failure_tolerance_exceeded() {
+  # Numeric comparison of fail_count/total against the tolerance.
+  #
+  # This used to be `[[ $(echo "scale=2; $f / $t" | bc) > $tolerance ]]`, which
+  # inside [[ ]] is a *lexicographic string* comparison. bc prints fractions
+  # with no leading zero ('.07', '.50'), and '.' (0x2E) sorts below '0' (0x30),
+  # so every fraction compared as LESS than '0.1' and the guard only ever fired
+  # at '1.00'. The 10% tolerance was in practice 100%: a cohort could fail all
+  # but one package and still exit 0.
+  local fail_count="$1" total="$2" tolerance="${3:-0.1}"
+
+  [[ "${total}" -gt 0 ]] || return 1
+  (( $(echo "scale=4; ${fail_count} / ${total} > ${tolerance}" | bc -l) ))
+}
+
+junit_escape() {
+  # XML-escape stdin so a build log can sit inside a <failure> body.
+  sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' \
+      -e "s/'/\&apos;/g"
+}
+
+junit_failure_body() {
+  # Last 50 useful lines of a failed package's log, XML-escaped.
+  #
+  # The script runs under `set -x`, so a raw tail is almost entirely trace
+  # ("+ rm -rf /tmp/debbuilder.XXX") and buries the compiler error that
+  # actually explains the failure. Drop trace lines first; fall back to the
+  # raw tail if that leaves nothing.
+  local log="$1"
+  local filtered
+  # `|| true`: grep exits 1 when a log is nothing but trace, and `set -e` plus
+  # `set -o pipefail` would otherwise abort mid-report.
+  filtered=$(grep -v '^+' "${log}" | tail -50 || true)
+  [[ -n "${filtered//[[:space:]]/}" ]] || filtered=$(tail -50 "${log}")
+  printf '%s\n' "${filtered}" | junit_escape
+}
+
+junit_write_report() {
+  # $1 = destination file, remaining args = <testcase> elements.
+  #
+  # Mirrors rpmbuilder's report so a DEB cohort surfaces per-package results in
+  # the CI Tests tab. Without it a tolerated failure is invisible: the package
+  # is never built and never uploaded, but the job is green and nothing in the
+  # log summary says which package went missing.
+  local dest="$1"
+  shift
+  local total=$# failures=0 entry
+  for entry in "$@"; do
+    [[ "${entry}" == *"<failure "* ]] && failures=$((failures + 1))
+  done
+
+  mkdir -p "$(dirname "${dest}")"
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<testsuite name="deb-build" tests="%d" failures="%d">\n' \
+      "${total}" "${failures}"
+    [[ $# -gt 0 ]] && printf '%s\n' "$@"
+    printf '</testsuite>\n'
+  } > "${dest}"
+}
+
 getpagespeed_repo_suites() {
   local codename="$1"
   local channel="${2:-main}"
@@ -933,27 +994,64 @@ fi
 
 success_count=0
 fail_count=0
-failure_tolerance=0.1  # Example: Allow up to 10% of modules to fail
+failure_tolerance=${FAILURE_TOLERANCE:-0.1}  # Allow up to 10% of modules to fail
+
+# JUnit reporting, so a *tolerated* failure is still visible somewhere. The
+# cohort deliberately survives a handful of broken packages, which is what let
+# link, markdown, sxg, jpeg and server-redirect each fail every night for
+# months behind a green build.
+RESULTS_DIR="${OUTPUT}/test-results"
+declare -a junit_entries=()
+declare -a failed_packages=()
 
 for package_dir in $package_dirs; do
-  if build_package "$package_dir"; then
+  package_name=$(basename "$package_dir")
+  start_time=$(date +%s)
+
+  # Stream to CI in real time AND capture for the <failure> body. `set -o
+  # pipefail` is already in effect, so the pipeline reports build_package's
+  # status, not tee's; `if` keeps `set -e` from killing the script here.
+  build_log=$(mktemp)
+  if build_package "$package_dir" 2>&1 | tee "$build_log"; then
     success_count=$((success_count + 1))
+    junit_entries+=("$(printf '  <testcase classname="deb-build" name="%s" time="%d"/>' \
+      "$package_name" "$(( $(date +%s) - start_time ))")")
   else
     fail_count=$((fail_count + 1))
+    failed_packages+=("$package_name")
+    junit_entries+=("$(printf '  <testcase classname="deb-build" name="%s" time="%d"><failure message="Build failed">%s</failure></testcase>' \
+      "$package_name" "$(( $(date +%s) - start_time ))" \
+      "$(junit_failure_body "$build_log")")")
   fi
+  rm -f "$build_log"
 
   if plesk_failure_is_fatal "${fail_count}"; then
     echo "Plesk cohort requires zero unexpected failures; ${package_dir} failed."
+    junit_write_report "${RESULTS_DIR}/build-results.xml" "${junit_entries[@]}"
     exit 1
   fi
 
   # Check if failure tolerance is exceeded
-  if [[ $(echo "scale=2; $fail_count / $total_modules" | bc) > $failure_tolerance ]]; then
+  if failure_tolerance_exceeded "$fail_count" "$total_modules" "$failure_tolerance"; then
     echo "Built $success_count packages successfully, but $fail_count failed out of $total_modules total packages."
     echo "Failure tolerance exceeded. Exiting build."
+    junit_write_report "${RESULTS_DIR}/build-results.xml" "${junit_entries[@]}"
     exit 1
   fi
 done
+
+junit_write_report "${RESULTS_DIR}/build-results.xml" "${junit_entries[@]}"
+
+# Loud summary. A green exit below does NOT mean everything published, so name
+# the packages that did not -- grep-able from a job log even where the CI has
+# no Tests tab.
+if [[ "${#failed_packages[@]}" -gt 0 ]]; then
+  echo "!!! TOLERATED BUILD FAILURES: ${#failed_packages[@]} of ${total_modules} packages did not build and will NOT be published:"
+  printf '!!!   %s\n' "${failed_packages[@]}"
+  echo "!!! The build is exiting 0 because this is within the ${failure_tolerance} failure tolerance."
+else
+  echo "All ${total_modules} packages accounted for (${success_count} built or skipped, 0 failed)."
+fi
 
 # Fix user IDs for output files
 if [ -n "${OUTPUT_UID}" ]; then
