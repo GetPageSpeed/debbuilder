@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -47,12 +48,28 @@ def select_target(
     return target
 
 
+def nginx_abi_version(source_url: str) -> str:
+    """Return the exact compiled NGINX version from its source URL.
+
+    Plesk may append respin components to its package version (for example,
+    1.30.4.1) while compiling the binary from nginx.org's 1.30.4 source.
+    Dynamic modules must match that compiled version exactly.
+    """
+    pattern = r"/nginx-(\d+)\.(\d+)\.(\d+)\.tar\.gz(?:[?#].*)?$"
+    match = re.search(pattern, source_url)
+    if not match:
+        raise ValueError(f"Cannot derive NGINX ABI version from {source_url}")
+    return ".".join(match.groups())
+
+
 def shell_assignments(target: dict[str, object]) -> str:
     """Render target values as safely quoted shell assignments."""
     packages = target["packages"]
+    abi_version = nginx_abi_version(str(target["nginx_source_url"]))
     values = {
         "PLESK_NGINX_VERSION": target["nginx_version"],
         "PLESK_NGINX_SOURCE_URL": target["nginx_source_url"],
+        "PLESK_NGINX_ABI_VERSION": abi_version,
         "PLESK_SW_NGINX_PACKAGE_VERSION": target["sw_nginx_version"],
         "PLESK_BUILD_FINGERPRINT": target["fingerprint"],
         "PLESK_BASE_CONFIGURE_ARGS": shlex.join(target["configure_args"]),
