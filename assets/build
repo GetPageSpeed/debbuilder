@@ -236,8 +236,35 @@ while [[ "$1" != "" ]]; do
     shift # Move to the next argument
 done
 
+derive_plesk_abi_version() {
+    local source_name
+    source_name="${PLESK_NGINX_SOURCE_URL%%\?*}"
+    source_name="${source_name##*/nginx-}"
+    source_name="${source_name%.tar.gz}"
+    if [[ ! "${source_name}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: cannot derive Plesk NGINX ABI from ${PLESK_NGINX_SOURCE_URL}"
+        return 1
+    fi
+    PLESK_NGINX_ABI_VERSION="${source_name}"
+}
+
+select_plesk_manifest() {
+    local manifest="$1"
+
+    eval "$(plesk-target --shell "${manifest}")"
+    # Images built before exact-ABI support do not emit this assignment. The
+    # fetched latest build script derives it from the authoritative source URL.
+    if [[ -z "${PLESK_NGINX_ABI_VERSION:-}" ]]; then
+        derive_plesk_abi_version
+    fi
+    export PLESK_NGINX_VERSION PLESK_NGINX_SOURCE_URL
+    export PLESK_NGINX_ABI_VERSION PLESK_SW_NGINX_PACKAGE_VERSION
+    export PLESK_BUILD_FINGERPRINT PLESK_BASE_CONFIGURE_ARGS
+    export PLESK_SW_NGINX_URL PLESK_MOD_SECURITY_URL
+}
+
 # Plesk module builds use a committed per-target manifest. Resolve it once per
-# job so every module in the cohort is stamped against the same sw-nginx build.
+# job so ordinary modules are stamped against the current sw-nginx build.
 RAW_BUILD_BRANCH="${GIT_BRANCH:-${CIRCLE_BRANCH:-${BRANCH:-}}}"
 if [[ "${RAW_BUILD_BRANCH}" == "plesk" || "${PLESK:-0}" != "0" ]]; then
     PLESK_MANIFEST="${SOURCES}/plesk-builds.json"
@@ -249,11 +276,7 @@ if [[ "${RAW_BUILD_BRANCH}" == "plesk" || "${PLESK:-0}" != "0" ]]; then
         echo "Error: Plesk build requested but /usr/bin/plesk-target is unavailable"
         exit 1
     fi
-    eval "$(plesk-target --shell "${PLESK_MANIFEST}")"
-    export PLESK_NGINX_VERSION PLESK_NGINX_SOURCE_URL
-    export PLESK_SW_NGINX_PACKAGE_VERSION
-    export PLESK_BUILD_FINGERPRINT PLESK_BASE_CONFIGURE_ARGS
-    export PLESK_SW_NGINX_URL PLESK_MOD_SECURITY_URL
+    select_plesk_manifest "${PLESK_MANIFEST}"
     PLESK_BUILD=true
     echo "Selected Plesk sw-nginx ${PLESK_SW_NGINX_PACKAGE_VERSION}"
 fi
@@ -503,10 +526,27 @@ check_packages_in_repo() {
 # Build the debian package
 build_package() {
     local source_dir=$1
+    local PLESK_NGINX_VERSION="${PLESK_NGINX_VERSION:-}"
+    local PLESK_NGINX_SOURCE_URL="${PLESK_NGINX_SOURCE_URL:-}"
+    local PLESK_NGINX_ABI_VERSION="${PLESK_NGINX_ABI_VERSION:-}"
+    local PLESK_SW_NGINX_PACKAGE_VERSION="${PLESK_SW_NGINX_PACKAGE_VERSION:-}"
+    local PLESK_BUILD_FINGERPRINT="${PLESK_BUILD_FINGERPRINT:-}"
+    local PLESK_BASE_CONFIGURE_ARGS="${PLESK_BASE_CONFIGURE_ARGS:-}"
+    local PLESK_SW_NGINX_URL="${PLESK_SW_NGINX_URL:-}"
+    local PLESK_MOD_SECURITY_URL="${PLESK_MOD_SECURITY_URL:-}"
     echo "Building package from directory: ${source_dir}"
     echo "Current directory before cd: $(pwd)"
     cd "$source_dir"
     echo "Current directory after cd: $(pwd)"
+
+    # Retained sw-nginx-compat joins carry their own historical manifest.
+    # Select it only for that source package; Bash's dynamic local scope keeps
+    # the current cohort manifest intact for every subsequent module build.
+    if [[ "${PLESK_BUILD}" == "true" && -f "plesk-builds.json" ]]; then
+        PLESK_NGINX_ABI_VERSION=""
+        select_plesk_manifest "plesk-builds.json"
+        echo "Selected retained Plesk join ${PLESK_SW_NGINX_PACKAGE_VERSION}"
+    fi
 
     local current_dist_id=""
     current_dist_id="$(debbuilder_dist_id || true)"
@@ -596,16 +636,20 @@ build_package() {
     cd "${BUILD_ROOT}"
 
     if [[ "${PLESK_BUILD}" == "true" ]]; then
-        python3 - "${PLESK_SW_NGINX_PACKAGE_VERSION}" "${PLESK_BASE_CONFIGURE_ARGS}" <<'PY'
+        python3 - "${PLESK_SW_NGINX_PACKAGE_VERSION}" \
+            "${PLESK_NGINX_ABI_VERSION}" "${PLESK_BUILD_FINGERPRINT}" \
+            "${PLESK_BASE_CONFIGURE_ARGS}" <<'PY'
 from pathlib import Path
 import sys
 
-sw_nginx_version, configure_args = sys.argv[1:]
+sw_nginx_version, abi_version, fingerprint, configure_args = sys.argv[1:]
 replacements = {
     "PLESK_SW_NGINX_PACKAGE_VERSION": sw_nginx_version,
+    "PLESK_NGINX_ABI_VERSION": abi_version,
+    "PLESK_BUILD_FINGERPRINT": fingerprint,
     "PLESK_BASE_CONFIGURE_ARGS": configure_args,
 }
-for relative in ("debian/control", "debian/rules"):
+for relative in ("debian/control", "debian/changelog", "debian/rules"):
     path = Path(relative)
     if not path.exists():
         continue
