@@ -1018,6 +1018,14 @@ EOF
     echo "Package built successfully for ${source_dir}."
 }
 
+# The base GetPageSpeed repo (stable codename suite) is the dependency base
+# for everything we build (openssl35-dev, module -dev libraries, ...), so it
+# is enabled ALWAYS — not opt-in via --enable-repos. Previously it was only
+# configured as a non-fatal side effect of the repo existence check, which
+# left Build-Depends installs one network hiccup away from failure.
+# --enable-repos remains for extra channels (e.g. getpagespeed-extras-mainline,
+# whose suite list also includes the stable base) and non-GPS repos.
+setup_getpagespeed_repo main || echo "Warning: base GetPageSpeed APT repo not configured; Build-Depends from it will not resolve."
 enable_additional_repos
 
 # Find all packages and build them

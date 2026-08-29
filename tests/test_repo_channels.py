@@ -76,3 +76,23 @@ class RepoIdChannelTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BaseRepoAlwaysEnabledTest(unittest.TestCase):
+    """The base GetPageSpeed repo is enabled unconditionally, not via --enable-repos.
+
+    It is the dependency base for everything we build (openssl35-dev, module
+    -dev libraries); before this it was only configured as a non-fatal side
+    effect of the repo existence check.
+    """
+
+    def test_build_flow_sets_up_base_repo_unconditionally(self) -> None:
+        text = BUILD_SCRIPT.read_text()
+        idx_setup = text.find("setup_getpagespeed_repo main ||")
+        idx_extra = text.find("\nenable_additional_repos\n")
+        self.assertGreater(idx_setup, -1, "unconditional base repo setup missing")
+        self.assertGreater(idx_extra, -1, "enable_additional_repos invocation missing")
+        self.assertLess(
+            idx_setup, idx_extra,
+            "base repo setup must run before optional extra repos",
+        )
