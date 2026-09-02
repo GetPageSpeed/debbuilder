@@ -47,6 +47,9 @@ jobs:
           fetch-depth: 0
         timeout-minutes: 5
       
+      - name: Set up the GetPageSpeed repo user agent for images
+        run: sed -i "s@XXXXXXXXXX@${{ secrets.DEBBUILDER_UA }}@g" assets/transient/setup.sh
+
       - name: Generate Dockerfile
         run: ./crypt-keeper.sh generate ${{ matrix.os }} ${{ matrix.version }}
 
@@ -83,6 +86,12 @@ jobs:
             -v "$(pwd)"/tests:/sources \
             -v "$(pwd)"/output:/output \
             "$(./crypt-keeper.sh docker-image-name ${{ matrix.os }} ${{ matrix.version }})" build
+
+      - name: Verify the image carries the GetPageSpeed repo user agent
+        run: |
+          docker run --rm --platform linux/amd64 \
+            "$(./crypt-keeper.sh docker-image-name ${{ matrix.os }} ${{ matrix.version }})" \
+            test -s /etc/apt/apt.conf.d/90-getpagespeed-ua
 
       - name: Push to Docker Hub
         run: ./crypt-keeper.sh push ${{ matrix.os }} ${{ matrix.version }}

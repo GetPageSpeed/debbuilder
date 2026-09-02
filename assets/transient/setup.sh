@@ -26,6 +26,23 @@ install_required_packages() {
     done
 }
 
+# The GetPageSpeed DEB pool is subscription-gated per client IP, so a build
+# runner is admitted by user agent instead, exactly like rpmbuilder's dnf plugin.
+# The image workflow substitutes the DEBBUILDER_UA secret for the ten-X
+# placeholder at build time; an unsubstituted or empty value keeps apt's
+# default agent and the paid pool then answers 403 to build-dependency fetches.
+configure_repo_user_agent() {
+    local ua="$1"
+    local conf="${2:-/etc/apt/apt.conf.d/90-getpagespeed-ua}"
+
+    if [[ -z "${ua}" || "${ua}" == *XXXX* ]]; then
+        echo "No builder user agent configured; GetPageSpeed pool fetches stay anonymous." >&2
+        return 0
+    fi
+
+    printf 'Acquire::http::User-Agent "%s";\nAcquire::https::User-Agent "%s";\n' "${ua}" "${ua}" > "${conf}"
+}
+
 if [[ "${DEBBUILDER_SETUP_HELPERS_ONLY:-0}" == "1" ]]; then
     return 0
 fi
@@ -93,6 +110,9 @@ until ${PKGR} update -y; do
   sleep 5
 done
 install_required_packages "${PRE_PACKAGES}"
+
+# Substituted by .github/workflows/dockerbuild.yml from the DEBBUILDER_UA secret.
+configure_repo_user_agent "XXXXXXXXXX"
 
 # Install the core development and packaging tools
 install_required_packages "${PACKAGES}"

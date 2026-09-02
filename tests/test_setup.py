@@ -50,5 +50,36 @@ class RequiredPackageInstallTest(unittest.TestCase):
         self.assertIn("Failed to install required packages after 2 attempts", result.stderr)
 
 
+class RepoUserAgentTest(unittest.TestCase):
+    """The paid DEB pool admits builders by user agent, never anonymously."""
+
+    def _run(self, ua_literal: str) -> tuple[subprocess.CompletedProcess, Path]:
+        import tempfile
+
+        conf = Path(tempfile.mkdtemp()) / "90-getpagespeed-ua"
+        result = run_helper(f"configure_repo_user_agent {ua_literal} '{conf}'")
+        return result, conf
+
+    def test_writes_apt_user_agent_for_http_and_https(self) -> None:
+        result, conf = self._run("'builder-agent'")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            conf.read_text(),
+            'Acquire::http::User-Agent "builder-agent";\n'
+            'Acquire::https::User-Agent "builder-agent";\n',
+        )
+
+    def test_unsubstituted_placeholder_leaves_apt_default(self) -> None:
+        result, conf = self._run("'XXXXXXXXXX'")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(conf.exists())
+        self.assertIn("stay anonymous", result.stderr)
+
+    def test_empty_secret_leaves_apt_default(self) -> None:
+        result, conf = self._run("''")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(conf.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
