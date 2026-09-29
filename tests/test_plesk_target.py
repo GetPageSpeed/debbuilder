@@ -75,5 +75,73 @@ class PleskTargetTest(unittest.TestCase):
         self.assertIn('select_plesk_manifest "plesk-builds.json"', build)
 
 
+class SelectPleskManifestTest(unittest.TestCase):
+    """select_plesk_manifest must surface plesk-target failures to callers.
+
+    Mid-rollout, per-fingerprint retained-join manifests cover only a subset
+    of suites (2026-09-29 straddle). `eval "$(plesk-target ...)"` used to
+    discard the exit code, so a missing target evaluated nothing and
+    "succeeded" with empty values; the retained-join call site now skips on
+    failure instead of failing the lane.
+    """
+
+    def run_select(self, plesk_target_stub: str, tmp: Path):
+        import os
+        import subprocess
+
+        stub_dir = tmp / "stubs"
+        stub_dir.mkdir()
+        stub = stub_dir / "plesk-target"
+        stub.write_text("#!/bin/bash\n" + plesk_target_stub + "\n")
+        stub.chmod(0o755)
+        env = os.environ.copy()
+        env["DEBBUILDER_HELPERS_ONLY"] = "1"
+        env["PATH"] = f"{stub_dir}:{env['PATH']}"
+        command = (
+            'source "$1"; '
+            "if select_plesk_manifest manifest.json; then "
+            '  echo "SELECTED=${PLESK_SW_NGINX_PACKAGE_VERSION}"; '
+            "else echo MISSING; fi"
+        )
+        return subprocess.run(
+            ["bash", "-c", command, "test-helper", str(ROOT / "assets" / "build")],
+            capture_output=True,
+            env=env,
+            text=True,
+        )
+
+    def test_missing_target_is_a_detectable_failure_not_empty_success(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_select(
+                'echo "Plesk target absent" >&2; exit 1', Path(tmp)
+            )
+        self.assertEqual(result.stdout.strip(), "MISSING", result.stderr)
+
+    def test_present_target_still_selects_and_exports(self):
+        import tempfile
+
+        assignments = (
+            "echo PLESK_NGINX_VERSION=1.30.5\n"
+            "echo PLESK_NGINX_SOURCE_URL=https://nginx.org/download/nginx-1.30.5.tar.gz\n"
+            "echo PLESK_NGINX_ABI_VERSION=1.30.5\n"
+            "echo PLESK_SW_NGINX_PACKAGE_VERSION=1.30.5.1\n"
+            "echo PLESK_BUILD_FINGERPRINT=p18.0.81.2.t260925.2015\n"
+            "echo PLESK_BASE_CONFIGURE_ARGS=--with-compat\n"
+            "echo PLESK_SW_NGINX_URL=https://example.test/sw-nginx.deb\n"
+            "echo PLESK_MOD_SECURITY_URL=https://example.test/modsec.deb"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_select(assignments, Path(tmp))
+        self.assertEqual(result.stdout.strip(), "SELECTED=1.30.5.1", result.stderr)
+
+    def test_retained_join_call_site_skips_on_selection_failure(self):
+        build = (ROOT / "assets" / "build").read_text()
+
+        self.assertIn('if ! select_plesk_manifest "plesk-builds.json"; then', build)
+        self.assertIn("no target in its retained Plesk join manifest", build)
+
+
 if __name__ == "__main__":
     unittest.main()
