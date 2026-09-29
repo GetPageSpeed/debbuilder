@@ -171,7 +171,42 @@ getpagespeed_channel_from_repo_id() {
   printf '%s\n' "${channel}"
 }
 
-# Unit tests source this file only to exercise the parser above.
+derive_plesk_abi_version() {
+    local source_name
+    source_name="${PLESK_NGINX_SOURCE_URL%%\?*}"
+    source_name="${source_name##*/nginx-}"
+    source_name="${source_name%.tar.gz}"
+    if [[ ! "${source_name}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: cannot derive Plesk NGINX ABI from ${PLESK_NGINX_SOURCE_URL}"
+        return 1
+    fi
+    PLESK_NGINX_ABI_VERSION="${source_name}"
+}
+
+select_plesk_manifest() {
+    local manifest="$1"
+    local assignments
+
+    # Capture first: `eval "$(...)"` discards plesk-target's exit code, so a
+    # manifest without this suite's target used to eval nothing and "succeed"
+    # with empty values. Callers must be able to see the failure — the cohort
+    # manifest at job start treats it as fatal, a retained join skips.
+    if ! assignments="$(plesk-target --shell "${manifest}")"; then
+        return 1
+    fi
+    eval "${assignments}"
+    # Images built before exact-ABI support do not emit this assignment. The
+    # fetched latest build script derives it from the authoritative source URL.
+    if [[ -z "${PLESK_NGINX_ABI_VERSION:-}" ]]; then
+        derive_plesk_abi_version
+    fi
+    export PLESK_NGINX_VERSION PLESK_NGINX_SOURCE_URL
+    export PLESK_NGINX_ABI_VERSION PLESK_SW_NGINX_PACKAGE_VERSION
+    export PLESK_BUILD_FINGERPRINT PLESK_BASE_CONFIGURE_ARGS
+    export PLESK_SW_NGINX_URL PLESK_MOD_SECURITY_URL
+}
+
+# Unit tests source this file only to exercise the helpers above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
@@ -236,32 +271,6 @@ while [[ "$1" != "" ]]; do
     shift # Move to the next argument
 done
 
-derive_plesk_abi_version() {
-    local source_name
-    source_name="${PLESK_NGINX_SOURCE_URL%%\?*}"
-    source_name="${source_name##*/nginx-}"
-    source_name="${source_name%.tar.gz}"
-    if [[ ! "${source_name}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "Error: cannot derive Plesk NGINX ABI from ${PLESK_NGINX_SOURCE_URL}"
-        return 1
-    fi
-    PLESK_NGINX_ABI_VERSION="${source_name}"
-}
-
-select_plesk_manifest() {
-    local manifest="$1"
-
-    eval "$(plesk-target --shell "${manifest}")"
-    # Images built before exact-ABI support do not emit this assignment. The
-    # fetched latest build script derives it from the authoritative source URL.
-    if [[ -z "${PLESK_NGINX_ABI_VERSION:-}" ]]; then
-        derive_plesk_abi_version
-    fi
-    export PLESK_NGINX_VERSION PLESK_NGINX_SOURCE_URL
-    export PLESK_NGINX_ABI_VERSION PLESK_SW_NGINX_PACKAGE_VERSION
-    export PLESK_BUILD_FINGERPRINT PLESK_BASE_CONFIGURE_ARGS
-    export PLESK_SW_NGINX_URL PLESK_MOD_SECURITY_URL
-}
 
 # Plesk module builds use a committed per-target manifest. Resolve it once per
 # job so ordinary modules are stamped against the current sw-nginx build.
@@ -542,9 +551,14 @@ build_package() {
     # Retained sw-nginx-compat joins carry their own historical manifest.
     # Select it only for that source package; Bash's dynamic local scope keeps
     # the current cohort manifest intact for every subsequent module build.
+    # A join archived mid-rollout covers only the suites that were on its
+    # fingerprint, so a suite absent from it skips instead of failing the lane.
     if [[ "${PLESK_BUILD}" == "true" && -f "plesk-builds.json" ]]; then
         PLESK_NGINX_ABI_VERSION=""
-        select_plesk_manifest "plesk-builds.json"
+        if ! select_plesk_manifest "plesk-builds.json"; then
+            echo "Skipping ${source_dir}: this suite has no target in its retained Plesk join manifest."
+            return 0
+        fi
         echo "Selected retained Plesk join ${PLESK_SW_NGINX_PACKAGE_VERSION}"
     fi
 
