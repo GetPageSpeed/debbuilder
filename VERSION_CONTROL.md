@@ -63,6 +63,7 @@ getpagespeed/debbuilder:debian-bookworm
 
 #### 2. Dist Tags (Version Numbers - Similar to RPM %{?dist})
 ```
+getpagespeed/debbuilder:ubuntu26.04  # resolute/26.04
 getpagespeed/debbuilder:ubuntu24.04  # noble/24.04
 getpagespeed/debbuilder:ubuntu22.04  # jammy/22.04
 getpagespeed/debbuilder:ubuntu20.04  # focal/20.04

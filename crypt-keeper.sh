@@ -97,6 +97,7 @@ function docker-image-dist-tag() {
                 focal) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu20.04" ;;
                 jammy) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu22.04" ;;
                 noble) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu24.04" ;;
+                resolute) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu26.04" ;;
                 kinetic) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu22.10" ;;
                 *) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu${VERSION}" ;;
             esac

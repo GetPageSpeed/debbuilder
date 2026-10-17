@@ -17,7 +17,11 @@ This project provides Docker images for building Debian packages (.deb files) ac
 
 Currently supported Ubuntu versions:
 - `ubuntu/focal` - Ubuntu 20.04 LTS
+- `ubuntu/jammy` - Ubuntu 22.04 LTS
 - `ubuntu/noble` - Ubuntu 24.04 LTS
+- `ubuntu/resolute` - Ubuntu 26.04 LTS
+- `debian/bookworm` - Debian 12
+- `debian/trixie` - Debian 13
 
 ## Quick Start
 
