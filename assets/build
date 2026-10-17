@@ -233,6 +233,18 @@ build_deps_satisfied() {
     dpkg-checkbuilddeps
 }
 
+# True when the configured APT repos already carry this exact version.
+# Never `apt-cache show ... | grep -q .`: under `set -o pipefail` grep -q exits
+# on the first byte, apt-cache dies of SIGPIPE (141) while still writing the
+# stanza, and the pipeline reads as "missing". That coin flip rebuilt about
+# half of every cohort lane's already-published modules and filled
+# ~/incoming-deb/_conflict with same-NVR/different-bytes rejects (2026-10-17).
+apt_has_exact_version() {
+    local name="$1" version="$2" stanza
+    stanza="$(apt-cache show "${name}=${version}" 2>/dev/null)" || return 1
+    [[ -n "${stanza}" ]]
+}
+
 # Unit tests source this file only to exercise the helpers above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -548,7 +560,7 @@ check_packages_in_repo() {
         setup_getpagespeed_repo "${gps_channel}" || echo "Warning: GetPageSpeed APT repo not configured; repo existence checks may be incomplete."
 
         # Check if this exact version already exists in the configured APT repo
-        if apt-cache show "${package_name}=${package_version}" 2>/dev/null | grep -q .; then
+        if apt_has_exact_version "${package_name}" "${package_version}"; then
             echo "Package ${package_name} version ${package_version} already exists in APT repo. Skipping build."
             return 0
         else
@@ -625,7 +637,7 @@ build_package() {
     fi
 
     URL="${TEMPLATE//\{version\}/${UPSTREAM_VERSION}}"
-    if printf '%s' "${URL}" | grep -q '{name}'; then
+    if [[ "${URL}" == *'{name}'* ]]; then
         URL="${URL//\{name\}/${PACKAGE}}"
     fi
     echo "Resolved source URL: ${URL}"
