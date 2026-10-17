@@ -206,6 +206,33 @@ select_plesk_manifest() {
     export PLESK_SW_NGINX_URL PLESK_MOD_SECURITY_URL
 }
 
+# Package lists only need refreshing once per job, not once per package: a
+# cohort lane builds ~110 modules in one container, and every per-package
+# `apt-get update` re-downloaded the same indexes. build_package runs in a
+# `| tee` subshell, so freshness lives in a stamp file, not a shell variable.
+APT_LISTS_STAMP="${APT_LISTS_STAMP:-/tmp/.debbuilder-apt-lists-refreshed}"
+
+mark_apt_lists_fresh() {
+    touch "${APT_LISTS_STAMP}" 2>/dev/null || true
+}
+
+apt_lists_fresh() {
+    local max_age="${APT_LISTS_MAX_AGE:-1800}"
+    local refreshed_at
+    [[ -f "${APT_LISTS_STAMP}" ]] || return 1
+    refreshed_at="$(date -r "${APT_LISTS_STAMP}" +%s 2>/dev/null)" || return 1
+    (( $(date +%s) - refreshed_at < max_age ))
+}
+
+# dpkg-checkbuilddeps is the same check debuild runs before building, so a
+# pass here means installing Build-Depends would be a no-op. It honours
+# versioned constraints, alternatives and Build-Conflicts, unlike
+# check-deps.sh, which only asks whether a package is *available*.
+build_deps_satisfied() {
+    [[ -f "debian/control" ]] || return 1
+    dpkg-checkbuilddeps
+}
+
 # Unit tests source this file only to exercise the helpers above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -347,6 +374,7 @@ enable_additional_repos() {
         *)
             add-apt-repository "${ENABLE_REPOS}" || exit 1
             apt-get update
+            mark_apt_lists_fresh
             ;;
     esac
 }
@@ -450,6 +478,7 @@ setup_getpagespeed_repo() {
         echo "setup_getpagespeed_repo: apt-get update failed after configuring GetPageSpeed repo; continuing without repo."
         return 1
     fi
+    mark_apt_lists_fresh
 
     return 0
 }
@@ -871,126 +900,139 @@ PY
     # Install build dependencies from the current directory (which should have debian/control)
     echo "Installing build dependencies from $(pwd)..."
 
-    # Ensure package lists are up to date
-    echo "Updating package lists..."
-    if ! apt-get update; then
-        echo "Warning: Failed to update package lists, attempting to fix repository configuration..."
-        # Universal approach: Try to fix GPG issues without hardcoding distros
-        echo "Attempting to fix GPG key issues..."
-        # Method 1: Try updating with --allow-unauthenticated
-        if apt-get update --allow-unauthenticated; then
-            echo "Successfully updated package lists with --allow-unauthenticated"
-        else
-            echo "Failed with --allow-unauthenticated, trying to fix GPG keys..."
+    # Steady state: the cohort's shared Build-Depends are already installed by
+    # an earlier package in this job, so skip the whole install round-trip.
+    if build_deps_satisfied; then
+        echo "All Build-Depends already installed; skipping apt-get update, check-deps.sh and mk-build-deps."
+    else
+        # Ensure package lists are up to date
+        local apt_lists_refreshed=true
+        if apt_lists_fresh; then
+            echo "Package lists were refreshed earlier in this job; skipping apt-get update."
+            apt_lists_refreshed=false
+        elif ! apt-get update; then
+            echo "Warning: Failed to update package lists, attempting to fix repository configuration..."
+            # Universal approach: Try to fix GPG issues without hardcoding distros
+            echo "Attempting to fix GPG key issues..."
+            # Method 1: Try updating with --allow-unauthenticated
+            if apt-get update --allow-unauthenticated; then
+                echo "Successfully updated package lists with --allow-unauthenticated"
+            else
+                echo "Failed with --allow-unauthenticated, trying to fix GPG keys..."
 
-            # Method 2: Try to refresh GPG keys
-            if command -v apt-key &>/dev/null; then
-                echo "Refreshing GPG keys..."
-                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138 || true
-                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 0E98404D386FA1D9 || true
-                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517 || true
-            fi
-
-            # Method 3: Try updating with trusted repositories
-            if ! apt-get update --allow-unauthenticated; then
-                echo "Attempting to configure trusted repositories..."
-
-                # Backup current sources
-                cp /etc/apt/sources.list /etc/apt/sources.list.backup 2>/dev/null || true
-
-                # Try to detect the distribution dynamically
-                if [[ -f /etc/os-release ]]; then
-                    # shellcheck disable=SC1091
-                    source /etc/os-release
-                    DISTRO_NAME="${VERSION_CODENAME:-${ID}}"
-                    echo "Detected distribution: $DISTRO_NAME"
-                elif [[ -f /etc/debian_version ]]; then
-                    # Fallback for older Debian systems - only use known versions
-                    DEBIAN_VERSION=$(cat /etc/debian_version | cut -d. -f1)
-                    case $DEBIAN_VERSION in
-                        12) DISTRO_NAME="bookworm" ;;
-                        13) DISTRO_NAME="trixie" ;;
-                        *)
-                            echo "Error: Unknown Debian version $DEBIAN_VERSION. Cannot safely determine repository."
-                            echo "Please ensure /etc/os-release is available or update this script for new Debian versions."
-                            cleanup_tmpdir "${WORKDIR}"
-                            return 1
-                            ;;
-                    esac
-                    echo "Detected Debian version: $DEBIAN_VERSION -> $DISTRO_NAME"
-                else
-                    echo "Error: Could not detect distribution"
-                    echo "Neither /etc/os-release nor /etc/debian_version found."
-                    cleanup_tmpdir "${WORKDIR}"
-                    return 1
+                # Method 2: Try to refresh GPG keys
+                if command -v apt-key &>/dev/null; then
+                    echo "Refreshing GPG keys..."
+                    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138 || true
+                    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 0E98404D386FA1D9 || true
+                    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517 || true
                 fi
 
-                # Create a minimal trusted sources.list
-                cat > /etc/apt/sources.list << EOF
+                # Method 3: Try updating with trusted repositories
+                if ! apt-get update --allow-unauthenticated; then
+                    echo "Attempting to configure trusted repositories..."
+
+                    # Backup current sources
+                    cp /etc/apt/sources.list /etc/apt/sources.list.backup 2>/dev/null || true
+
+                    # Try to detect the distribution dynamically
+                    if [[ -f /etc/os-release ]]; then
+                        # shellcheck disable=SC1091
+                        source /etc/os-release
+                        DISTRO_NAME="${VERSION_CODENAME:-${ID}}"
+                        echo "Detected distribution: $DISTRO_NAME"
+                    elif [[ -f /etc/debian_version ]]; then
+                        # Fallback for older Debian systems - only use known versions
+                        DEBIAN_VERSION=$(cat /etc/debian_version | cut -d. -f1)
+                        case $DEBIAN_VERSION in
+                            12) DISTRO_NAME="bookworm" ;;
+                            13) DISTRO_NAME="trixie" ;;
+                            *)
+                                echo "Error: Unknown Debian version $DEBIAN_VERSION. Cannot safely determine repository."
+                                echo "Please ensure /etc/os-release is available or update this script for new Debian versions."
+                                cleanup_tmpdir "${WORKDIR}"
+                                return 1
+                                ;;
+                        esac
+                        echo "Detected Debian version: $DEBIAN_VERSION -> $DISTRO_NAME"
+                    else
+                        echo "Error: Could not detect distribution"
+                        echo "Neither /etc/os-release nor /etc/debian_version found."
+                        cleanup_tmpdir "${WORKDIR}"
+                        return 1
+                    fi
+
+                    # Create a minimal trusted sources.list
+                    cat > /etc/apt/sources.list << EOF
 deb [trusted=yes] http://deb.debian.org/debian $DISTRO_NAME main
 deb [trusted=yes] http://deb.debian.org/debian $DISTRO_NAME-updates main
 deb [trusted=yes] http://deb.debian.org/debian-security $DISTRO_NAME-security main
 EOF
 
-                # Try updating with the new configuration
-                if ! apt-get update --allow-unauthenticated; then
-                    echo "Error: Failed to update package lists even after reconfiguring repositories"
-                    echo "Restoring original sources.list..."
-                    cp /etc/apt/sources.list.backup /etc/apt/sources.list 2>/dev/null || true
-                    cleanup_tmpdir "${WORKDIR}"
-                    return 1
-                fi
-            fi
-        fi
-    fi
-
-    # Pre-configure timezone to avoid tzdata interactive prompts
-    echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
-    echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
-    # Also set the timezone directly
-    ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
-    echo "Etc/UTC" > /etc/timezone
-
-    # Check for missing dependencies first
-    if [[ -f "/usr/bin/check-deps.sh" ]]; then
-        echo "Checking build dependencies..."
-        # Ensure the script has execute permissions
-        chmod +x /usr/bin/check-deps.sh || true
-        /usr/bin/check-deps.sh || {
-            echo "Dependency check failed. Attempting to install anyway..."
-        }
-    fi
-
-    # Preferred: install Build-Depends from local debian/control via mk-build-deps
-    if [[ -f "debian/control" ]]; then
-        echo "Attempting to install Build-Depends via mk-build-deps..."
-        if mk-build-deps -t 'apt-get --no-install-recommends -y' -i -r debian/control; then
-            echo "Successfully installed Build-Depends via mk-build-deps."
-        else
-            echo "mk-build-deps failed; attempting apt-get build-dep and manual fallback..."
-            # Try apt-get build-dep on the local tree
-            if apt-get build-dep -y .; then
-                echo "Successfully installed build dependencies via apt-get build-dep."
-            elif apt-get build-dep -y --allow-unauthenticated .; then
-                echo "Successfully installed build dependencies with --allow-unauthenticated."
-            else
-                echo "Falling back to parsing Build-Depends from debian/control..."
-                # Parse Build-Depends (first stanza) into package names (drop versions and alternatives)
-                RAW_DEPS=$(awk '/^Build-Depends:/ {flag=1; sub(/^Build-Depends:[[:space:]]*/,""); print; next} /^[^ ]/ {flag=0} flag {print}' debian/control \
-                    | tr -d '\n' | sed 's/, */\n/g' | sed 's/ (.*)//g' | sed 's/|/ /g' | awk '{print $1}' | grep -v -E '^[[:space:]]*$' || true)
-                if [[ -n "${RAW_DEPS}" ]]; then
-                    echo "Installing parsed Build-Depends: ${RAW_DEPS}"
-                    # shellcheck disable=SC2086 # RAW_DEPS is a package list.
-                    if ! apt-get install -y --no-install-recommends ${RAW_DEPS}; then
-                        echo "Warning: direct install of parsed Build-Depends failed; continuing."
+                    # Try updating with the new configuration
+                    if ! apt-get update --allow-unauthenticated; then
+                        echo "Error: Failed to update package lists even after reconfiguring repositories"
+                        echo "Restoring original sources.list..."
+                        cp /etc/apt/sources.list.backup /etc/apt/sources.list 2>/dev/null || true
+                        cleanup_tmpdir "${WORKDIR}"
+                        return 1
                     fi
                 fi
-                # Heuristic: common C toolchain deps (useful for C/C++ projects like nginx)
-                apt-get install -y --no-install-recommends build-essential || true
             fi
         fi
-    else
-        echo "No debian/control found; skipping mk-build-deps."
+
+        if [[ "${apt_lists_refreshed}" == "true" ]]; then
+            mark_apt_lists_fresh
+        fi
+
+        # Pre-configure timezone to avoid tzdata interactive prompts
+        echo "tzdata tzdata/Areas select Etc" | debconf-set-selections
+        echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
+        # Also set the timezone directly
+        ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
+        echo "Etc/UTC" > /etc/timezone
+
+        # Check for missing dependencies first
+        if [[ -f "/usr/bin/check-deps.sh" ]]; then
+            echo "Checking build dependencies..."
+            # Ensure the script has execute permissions
+            chmod +x /usr/bin/check-deps.sh || true
+            /usr/bin/check-deps.sh || {
+                echo "Dependency check failed. Attempting to install anyway..."
+            }
+        fi
+
+        # Preferred: install Build-Depends from local debian/control via mk-build-deps
+        if [[ -f "debian/control" ]]; then
+            echo "Attempting to install Build-Depends via mk-build-deps..."
+            if mk-build-deps -t 'apt-get --no-install-recommends -y' -i -r debian/control; then
+                echo "Successfully installed Build-Depends via mk-build-deps."
+            else
+                echo "mk-build-deps failed; attempting apt-get build-dep and manual fallback..."
+                # Try apt-get build-dep on the local tree
+                if apt-get build-dep -y .; then
+                    echo "Successfully installed build dependencies via apt-get build-dep."
+                elif apt-get build-dep -y --allow-unauthenticated .; then
+                    echo "Successfully installed build dependencies with --allow-unauthenticated."
+                else
+                    echo "Falling back to parsing Build-Depends from debian/control..."
+                    # Parse Build-Depends (first stanza) into package names (drop versions and alternatives)
+                    RAW_DEPS=$(awk '/^Build-Depends:/ {flag=1; sub(/^Build-Depends:[[:space:]]*/,""); print; next} /^[^ ]/ {flag=0} flag {print}' debian/control \
+                        | tr -d '\n' | sed 's/, */\n/g' | sed 's/ (.*)//g' | sed 's/|/ /g' | awk '{print $1}' | grep -v -E '^[[:space:]]*$' || true)
+                    if [[ -n "${RAW_DEPS}" ]]; then
+                        echo "Installing parsed Build-Depends: ${RAW_DEPS}"
+                        # shellcheck disable=SC2086 # RAW_DEPS is a package list.
+                        if ! apt-get install -y --no-install-recommends ${RAW_DEPS}; then
+                            echo "Warning: direct install of parsed Build-Depends failed; continuing."
+                        fi
+                    fi
+                    # Heuristic: common C toolchain deps (useful for C/C++ projects like nginx)
+                    apt-get install -y --no-install-recommends build-essential || true
+                fi
+            fi
+        else
+            echo "No debian/control found; skipping mk-build-deps."
+        fi
     fi
 
     # Build the package
