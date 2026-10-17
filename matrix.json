@@ -89,7 +89,8 @@
                     "git_branch": "master"
                 },
                 "mainline": {
-                    "description": "Mainline NGINX"
+                    "description": "Mainline NGINX",
+                    "enable_repos": "getpagespeed-extras-mainline"
                 },
                 "angie": {
                     "description": "Angie"
