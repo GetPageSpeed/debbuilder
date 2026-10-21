@@ -245,6 +245,20 @@ apt_has_exact_version() {
     [[ -n "${stanza}" ]]
 }
 
+# Install the packaging dir's debian/ into the unpacked upstream tree.
+# The packaging dir is the packaging authority: an upstream tarball that
+# ships its own debian/ (e.g. perusio/lua-resty-tarantool) must never win —
+# upstream packaging lacks the changelog stamp placeholders and the -Zxz
+# override, and its zstd control.tar is unreadable by reprepro 5.5.1 on the
+# APT host (broke the first lua-resty-deb publish on jammy/noble/resolute).
+install_packaging_debian() {
+    local source_dir="$1" build_root="$2"
+    if [[ -d "${build_root}/debian" ]]; then
+        rm -rf "${build_root}/debian"
+    fi
+    cp -r "${source_dir}/debian" "${build_root}/"
+}
+
 # Unit tests source this file only to exercise the helpers above.
 if [[ "${DEBBUILDER_HELPERS_ONLY:-0}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -680,9 +694,7 @@ build_package() {
         rmdir "${BUILD_ROOT}/${TOPDIR}" || true
     fi
 
-    if [[ ! -d "${BUILD_ROOT}/debian" ]]; then
-        cp -r "${source_dir}/debian" "${BUILD_ROOT}/"
-    fi
+    install_packaging_debian "${source_dir}" "${BUILD_ROOT}"
 
     if [[ -f "${source_dir}/version.yml" ]] && [[ ! -f "${BUILD_ROOT}/version.yml" ]]; then
         cp -f "${source_dir}/version.yml" "${BUILD_ROOT}/" || true
