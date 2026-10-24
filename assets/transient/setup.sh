@@ -68,7 +68,10 @@ echo "DISTRO: ${ID}, VERSION_CODENAME: ${VERSION_CODENAME}"
 
 # Package manager for Debian/Ubuntu systems
 PKGR="apt-get"
-PACKAGES="build-essential debhelper dpkg-dev devscripts lintian fakeroot quilt"
+# gawk: bionic's mawk 1.3.3 (1996) has no POSIX [[:space:]] classes, which
+# silently breaks the build script's upstream.yml parsing on legacy images;
+# installing gawk makes it the awk alternative everywhere.
+PACKAGES="build-essential debhelper dpkg-dev devscripts lintian fakeroot quilt gawk"
 PRE_PACKAGES="apt-transport-https ca-certificates curl gnupg bc"
 
 # If any additional repositories need to be added (like GetPageSpeed or other custom repositories)
