@@ -19,7 +19,11 @@
                 "24.04",
                 "26.04"
             ],
+            "legacy_versions": [
+                "18.04"
+            ],
             "codenames_map": {
+                "18.04": "bionic",
                 "20.04": "focal",
                 "22.04": "jammy",
                 "24.04": "noble",
@@ -53,7 +57,11 @@
                 12,
                 13
             ],
+            "legacy_versions": [
+                10
+            ],
             "codenames_map": {
+                "10": "buster",
                 "12": "bookworm",
                 "13": "trixie"
             },

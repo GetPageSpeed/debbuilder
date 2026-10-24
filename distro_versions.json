@@ -17,12 +17,20 @@
             "version": "resolute"
         },
         {
+            "os": "ubuntu",
+            "version": "bionic"
+        },
+        {
             "os": "debian",
             "version": "bookworm"
         },
         {
             "os": "debian",
             "version": "trixie"
+        },
+        {
+            "os": "debian",
+            "version": "buster"
         }
     ]
 }

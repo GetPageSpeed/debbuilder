@@ -47,6 +47,9 @@ ADD ./assets/plesk-target.py /usr/bin/plesk-target
 #ADD ./assets/deblint.config /etc/deblint/config
 ADD ./assets/transient/* /tmp/
 
+# EOL releases: rewrite dead stock mirrors to the archive BEFORE any apt update
+RUN bash /tmp/eol-sources.sh
+
 # Optimize apt settings for faster downloads
 RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \\
     echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \\
@@ -94,6 +97,7 @@ function docker-image-dist-tag() {
     case "${DISTRO}" in
         ubuntu)
             case "${VERSION}" in
+                bionic) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu18.04" ;;
                 focal) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu20.04" ;;
                 jammy) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu22.04" ;;
                 noble) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:ubuntu24.04" ;;
@@ -104,6 +108,7 @@ function docker-image-dist-tag() {
             ;;
         debian)
             case "${VERSION}" in
+                buster) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian10" ;;
                 bookworm) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian12" ;;
                 trixie) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian13" ;;
                 sid) echo -n "${DOCKER_REGISTRY_USER}/debbuilder:debian-sid" ;;
