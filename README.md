@@ -23,6 +23,11 @@ Currently supported Ubuntu versions:
 - `debian/bookworm` - Debian 12
 - `debian/trixie` - Debian 13
 
+Legacy EOL images (security-rebuild matrices such as `php-deb` only; apt
+sources point at the archive mirrors via `assets/transient/eol-sources.sh`):
+- `ubuntu/bionic` - Ubuntu 18.04 LTS (EOL)
+- `debian/buster` - Debian 10 (EOL)
+
 ## Quick Start
 
 ### 1. Build the Docker image

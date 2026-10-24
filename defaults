@@ -2,5 +2,7 @@ ubuntu focal
 ubuntu jammy
 ubuntu noble
 ubuntu resolute
+ubuntu bionic
 debian bookworm
 debian trixie
+debian buster
