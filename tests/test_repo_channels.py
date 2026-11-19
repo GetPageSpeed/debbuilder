@@ -1,7 +1,9 @@
 """Regression tests for GetPageSpeed APT channel composition."""
 
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 
@@ -25,6 +27,53 @@ def repo_suites(channel: str) -> list[str]:
         text=True,
     )
     return result.stdout.splitlines()
+
+
+def repo_suites_early(
+    channel: str, published: str, early_repos: str | None = "1"
+) -> tuple[list[str], int, str]:
+    """Run getpagespeed_repo_suites noble <channel> ubuntu with a fake curl.
+
+    The fake curl exits 0 only for URLs containing one of the space-separated
+    suite names in `published`, 22 otherwise, and logs every call. Returns
+    (suites, exit status, text of the curl call log; empty if never called).
+    """
+    with tempfile.TemporaryDirectory(prefix="fake-curl-") as tmp:
+        log = Path(tmp) / "curl.log"
+        fake = Path(tmp) / "curl"
+        fake.write_text(
+            "#!/bin/bash\n"
+            'echo "$*" >> "${FAKE_CURL_LOG}"\n'
+            'for suite in ${FAKE_PUBLISHED}; do\n'
+            '  case "${*: -1}" in */dists/"${suite}"/InRelease) exit 0;; esac\n'
+            "done\n"
+            "exit 22\n"
+        )
+        fake.chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = f"{tmp}:{env['PATH']}"
+        env["FAKE_CURL_LOG"] = str(log)
+        env["FAKE_PUBLISHED"] = published
+        env.pop("EARLY_REPOS", None)
+        if early_repos is not None:
+            env["EARLY_REPOS"] = early_repos
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'DEBBUILDER_HELPERS_ONLY=1 source "$1"; '
+                'getpagespeed_repo_suites noble "$2" ubuntu',
+                "test-repo-channels",
+                str(BUILD_SCRIPT),
+                channel,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        calls = log.read_text() if log.exists() else ""
+        return result.stdout.splitlines(), result.returncode, calls
 
 
 def channel_from_repo_id(repo_id: str) -> str:
@@ -72,6 +121,39 @@ class RepoIdChannelTest(unittest.TestCase):
 
     def test_stable_repo_id_maps_to_main(self) -> None:
         self.assertEqual(channel_from_repo_id("getpagespeed-extras-stable"), "main")
+
+
+class EarlySuiteTest(unittest.TestCase):
+    """EARLY_REPOS=1 adds the early twin of each suite that is published."""
+
+    def test_main_channel_adds_published_early_suite(self) -> None:
+        suites, status, _ = repo_suites_early("main", "noble-early")
+        self.assertEqual(status, 0)
+        self.assertEqual(suites, ["noble", "noble-early"])
+
+    def test_mainline_adds_both_early_twins_after_published_suites(self) -> None:
+        suites, status, _ = repo_suites_early(
+            "mainline", "noble-early noble-mainline-early"
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            suites,
+            ["noble", "noble-mainline", "noble-early", "noble-mainline-early"],
+        )
+
+    def test_unpublished_early_suite_is_skipped_without_failing(self) -> None:
+        suites, status, calls = repo_suites_early("main", "")
+        self.assertEqual(status, 0)
+        self.assertEqual(suites, ["noble"])
+        self.assertIn("/ubuntu/dists/noble-early/InRelease", calls)
+
+    def test_early_repos_unset_never_probes(self) -> None:
+        suites, status, calls = repo_suites_early(
+            "main", "noble-early", early_repos=None
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(suites, ["noble"])
+        self.assertEqual(calls, "")
 
 
 if __name__ == "__main__":

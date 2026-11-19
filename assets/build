@@ -149,14 +149,41 @@ junit_write_report() {
   } > "${dest}"
 }
 
+getpagespeed_suite_published() {
+  # 0 when the repo publishes <suite> for <family> (its InRelease exists).
+  local family="$1"
+  local suite="$2"
+  local base_url="${GPS_REPO_BASE_URL:-https://extras.getpagespeed.com}"
+  curl -fsSL --max-time 20 -o /dev/null \
+    "${base_url}/${family}/dists/${suite}/InRelease"
+}
+
 getpagespeed_repo_suites() {
   local codename="$1"
   local channel="${2:-main}"
+  local family="${3:-}"
+  local suites=()
+  local suite
 
   # Stable is the dependency base for every optional channel.
-  printf '%s\n' "${codename}"
+  suites+=("${codename}")
   if [[ "${channel}" != "main" && "${channel}" != "stable" ]]; then
-    printf '%s\n' "${codename}-${channel}"
+    suites+=("${codename}-${channel}")
+  fi
+  printf '%s\n' "${suites[@]}"
+
+  # A new nginx base waits in the early suite until its modules are built, so
+  # module builds must resolve Build-Depends from the early twin of each suite.
+  # A suite without an early twin builds against the published suite only;
+  # that is not an error.
+  if [[ "${EARLY_REPOS:-0}" == "1" && -n "${family}" ]]; then
+    for suite in "${suites[@]}"; do
+      if getpagespeed_suite_published "${family}" "${suite}-early"; then
+        printf '%s\n' "${suite}-early"
+      else
+        echo "No early suite ${suite}-early for ${family}; building against the published suite only" >&2
+      fi
+    done
   fi
 }
 
@@ -469,7 +496,7 @@ setup_getpagespeed_repo() {
             if ! grep -q " ${wanted_suite} main$" "${existing_list}"; then
                 suites_missing=1
             fi
-        done < <(getpagespeed_repo_suites "${codename}" "${channel}")
+        done < <(getpagespeed_repo_suites "${codename}" "${channel}" "${family}")
         if [[ "${suites_missing}" -eq 0 ]]; then
             return 0
         fi
@@ -498,7 +525,7 @@ setup_getpagespeed_repo() {
     : > "${list}"
     while IFS= read -r suite; do
         echo "deb [signed-by=${keyring}] ${base_url} ${suite} main" >> "${list}"
-    done < <(getpagespeed_repo_suites "${codename}" "${channel}")
+    done < <(getpagespeed_repo_suites "${codename}" "${channel}" "${family}")
 
     if ! apt-get update -y; then
         echo "setup_getpagespeed_repo: apt-get update failed after configuring GetPageSpeed repo; continuing without repo."
